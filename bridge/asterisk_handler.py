@@ -59,16 +59,23 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     peer = writer.get_extra_info("peername")
     logger.info("AudioSocket connection from %s", peer)
 
-    # First frame should be UUID
-    frame_type, payload = await read_frame(reader)
-    if frame_type != TYPE_UUID:
-        logger.error("Expected UUID frame, got type %d", frame_type)
+    try:
+        # First frame should be UUID
+        frame_type, payload = await read_frame(reader)
+        logger.info("First frame: type=0x%02x len=%d", frame_type, len(payload))
+
+        if frame_type != TYPE_UUID:
+            logger.error("Expected UUID frame (0x01), got type 0x%02x", frame_type)
+            writer.close()
+            return
+
+        call_uuid = payload.decode("utf-8", errors="ignore").strip()
+        call_sid = f"sip-{int(time.time())}"
+        logger.info("AudioSocket call started: %s (uuid: %s)", call_sid, call_uuid)
+    except Exception as e:
+        logger.error("Error reading first frame: %s", e)
         writer.close()
         return
-
-    call_uuid = payload.decode("utf-8", errors="ignore").strip()
-    call_sid = f"sip-{call_uuid[:12]}"
-    logger.info("AudioSocket call started: %s (uuid: %s)", call_sid, call_uuid)
 
     start_time = time.time()
     recorder = CallRecorder(call_sid)
