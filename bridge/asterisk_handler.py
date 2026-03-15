@@ -39,10 +39,16 @@ TYPE_ERROR = 0xFF
 
 
 async def read_frame(reader: asyncio.StreamReader):
-    """Read one AudioSocket frame. Returns (type, payload)."""
-    header = await reader.readexactly(4)
+    """Read one AudioSocket frame. Returns (type, payload).
+
+    Asterisk AudioSocket frame format:
+    - 1 byte: type
+    - 2 bytes: length (network byte order, big-endian)
+    - N bytes: payload
+    """
+    header = await reader.readexactly(3)
     frame_type = header[0]
-    length = (header[1] << 16) | (header[2] << 8) | header[3]
+    length = (header[1] << 8) | header[2]
     payload = await reader.readexactly(length) if length > 0 else b""
     return frame_type, payload
 
@@ -50,7 +56,7 @@ async def read_frame(reader: asyncio.StreamReader):
 def make_frame(frame_type: int, payload: bytes) -> bytes:
     """Build an AudioSocket frame."""
     length = len(payload)
-    header = bytes([frame_type, (length >> 16) & 0xFF, (length >> 8) & 0xFF, length & 0xFF])
+    header = bytes([frame_type, (length >> 8) & 0xFF, length & 0xFF])
     return header + payload
 
 
@@ -60,26 +66,15 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     logger.info("AudioSocket connection from %s", peer)
 
     try:
-        # Read first bytes to detect protocol
-        first_byte = await asyncio.wait_for(reader.read(1), timeout=5)
-        if not first_byte:
-            logger.error("Empty first read, closing")
+        frame_type, payload = await asyncio.wait_for(read_frame(reader), timeout=5)
+        logger.info("First frame: type=0x%02x len=%d", frame_type, len(payload))
+
+        if frame_type != TYPE_UUID:
+            logger.error("Expected UUID (0x01), got 0x%02x", frame_type)
             writer.close()
             return
 
-        logger.info("First byte: 0x%02x", first_byte[0])
-
-        if first_byte[0] == TYPE_UUID:
-            # Standard AudioSocket: 1 type + 3 length + payload
-            len_bytes = await reader.readexactly(3)
-            length = (len_bytes[0] << 16) | (len_bytes[1] << 8) | len_bytes[2]
-            payload = await reader.readexactly(length) if length > 0 else b""
-            call_uuid = payload.decode("utf-8", errors="ignore").strip()
-        else:
-            # UUID might be sent raw (36 bytes starting with first_byte)
-            rest = await reader.readexactly(35)
-            call_uuid = (first_byte + rest).decode("utf-8", errors="ignore").strip()
-
+        call_uuid = payload.decode("utf-8", errors="ignore").strip()
         call_sid = f"sip-{int(time.time())}"
         logger.info("AudioSocket call started: %s (uuid: %s)", call_sid, call_uuid)
     except Exception as e:
