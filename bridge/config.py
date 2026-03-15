@@ -19,6 +19,7 @@ DB_PATH = os.getenv("DB_PATH", "data/calls.db")
 RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "recordings")
 
 TICKET_WEBHOOK_URL = os.getenv("TICKET_WEBHOOK_URL", "")
+PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 
 GREETING_FILE = os.getenv("GREETING_FILE", "data/greeting.txt")
 PROMPT_FILE = os.getenv("PROMPT_FILE", "data/system_prompt.txt")

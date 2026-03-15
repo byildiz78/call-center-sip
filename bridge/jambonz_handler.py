@@ -176,8 +176,9 @@ async def handle_jambonz_ws(ws: WebSocket):
     await db.end_call(call_sid, duration, transcript, summary, recording_path, sentiment)
 
     # Send webhook
-    from bridge.config import BRIDGE_HOST, BRIDGE_PORT
-    recording_public_url = f"http://{BRIDGE_HOST}:{BRIDGE_PORT}/api/recordings/{call_sid}"
+    from bridge.config import PUBLIC_URL, BRIDGE_PORT
+    base_url = PUBLIC_URL or f"http://localhost:{BRIDGE_PORT}"
+    recording_public_url = f"{base_url}/api/recordings/{call_sid}"
     asyncio.create_task(
         send_webhook(
             call_sid=call_sid,

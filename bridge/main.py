@@ -288,7 +288,9 @@ async def browser_websocket(ws: WebSocket):
         logger.info("Test call ended: %s | %ds | %s | %s", call_sid, duration, sentiment, recording_path)
 
         from bridge.ticket import send_webhook
-        recording_public_url = f"http://{BRIDGE_HOST}:{BRIDGE_PORT}/api/recordings/{call_sid}"
+        from bridge.config import PUBLIC_URL
+        base_url = PUBLIC_URL or f"http://localhost:{BRIDGE_PORT}"
+        recording_public_url = f"{base_url}/api/recordings/{call_sid}"
         asyncio.create_task(send_webhook(
             call_sid=call_sid,
             caller_number="browser-test",
