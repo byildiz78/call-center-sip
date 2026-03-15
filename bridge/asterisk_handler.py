@@ -60,16 +60,26 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     logger.info("AudioSocket connection from %s", peer)
 
     try:
-        # First frame should be UUID
-        frame_type, payload = await read_frame(reader)
-        logger.info("First frame: type=0x%02x len=%d", frame_type, len(payload))
-
-        if frame_type != TYPE_UUID:
-            logger.error("Expected UUID frame (0x01), got type 0x%02x", frame_type)
+        # Read first bytes to detect protocol
+        first_byte = await asyncio.wait_for(reader.read(1), timeout=5)
+        if not first_byte:
+            logger.error("Empty first read, closing")
             writer.close()
             return
 
-        call_uuid = payload.decode("utf-8", errors="ignore").strip()
+        logger.info("First byte: 0x%02x", first_byte[0])
+
+        if first_byte[0] == TYPE_UUID:
+            # Standard AudioSocket: 1 type + 3 length + payload
+            len_bytes = await reader.readexactly(3)
+            length = (len_bytes[0] << 16) | (len_bytes[1] << 8) | len_bytes[2]
+            payload = await reader.readexactly(length) if length > 0 else b""
+            call_uuid = payload.decode("utf-8", errors="ignore").strip()
+        else:
+            # UUID might be sent raw (36 bytes starting with first_byte)
+            rest = await reader.readexactly(35)
+            call_uuid = (first_byte + rest).decode("utf-8", errors="ignore").strip()
+
         call_sid = f"sip-{int(time.time())}"
         logger.info("AudioSocket call started: %s (uuid: %s)", call_sid, call_uuid)
     except Exception as e:
