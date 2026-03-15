@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Robotpos - Giris</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#080d1a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.login-card{background:#111827;border:1px solid #1e293b;border-radius:20px;padding:40px;width:100%;max-width:380px;box-shadow:0 24px 48px rgba(0,0,0,.4)}
+.logo{text-align:center;margin-bottom:32px}
+.logo-icon{width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,#2563eb,#7c3aed);display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:24px;color:#fff;margin-bottom:12px}
+.logo h1{font-size:22px;color:#f1f5f9;font-weight:700}
+.logo p{font-size:13px;color:#64748b;margin-top:4px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;color:#94a3b8;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px;font-weight:600}
+input{width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px 14px;color:#e2e8f0;font-size:14px;transition:border-color .15s}
+input:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+.btn{width:100%;padding:12px;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;transition:all .15s;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;margin-top:8px}
+.btn:hover{box-shadow:0 4px 20px rgba(37,99,235,.4);transform:translateY(-1px)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+.error-msg{background:#450a0a;color:#fca5a5;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:16px;display:none}
+.error-msg.show{display:block}
+.info-msg{background:#1e3a5f;color:#93c5fd;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:16px;display:none}
+.info-msg.show{display:block}
+.pw-hint{font-size:11px;color:#64748b;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="login-card">
+    <div class="logo">
+        <div class="logo-icon">R</div>
+        <h1>Robotpos</h1>
+        <p>Call Center Yonetim Paneli</p>
+    </div>
+    <div class="error-msg" id="errorMsg"></div>
+    <div class="info-msg" id="infoMsg"></div>
+
+    <!-- Login Form -->
+    <form id="loginForm" onsubmit="handleLogin(event)">
+        <div class="form-group">
+            <label>Kullanici Adi</label>
+            <input type="text" id="username" autocomplete="username" required autofocus />
+        </div>
+        <div class="form-group">
+            <label>Parola</label>
+            <input type="password" id="password" autocomplete="current-password" required />
+        </div>
+        <button type="submit" class="btn" id="loginBtn">Giris Yap</button>
+    </form>
+
+    <!-- Change Password Form (shown after first login with default password) -->
+    <form id="changePwForm" style="display:none" onsubmit="handleChangePw(event)">
+        <div class="form-group">
+            <label>Yeni Parola</label>
+            <input type="password" id="newPw1" required />
+            <div class="pw-hint">En az 8 karakter, harf ve rakam icermeli</div>
+        </div>
+        <div class="form-group">
+            <label>Yeni Parola (tekrar)</label>
+            <input type="password" id="newPw2" required />
+        </div>
+        <button type="submit" class="btn" id="changePwBtn">Parolayi Degistir</button>
+    </form>
+</div>
+<script>
+let loggedInUserId = null;
+
+async function handleLogin(e) {
+    e.preventDefault();
+    const errEl = document.getElementById('errorMsg');
+    const infoEl = document.getElementById('infoMsg');
+    errEl.classList.remove('show');
+    infoEl.classList.remove('show');
+    const btn = document.getElementById('loginBtn');
+    btn.textContent = 'Giris yapiliyor...';
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: document.getElementById('username').value.trim(),
+                password: document.getElementById('password').value,
+            }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            if (data.must_change_pw) {
+                // Show change password form
+                document.getElementById('loginForm').style.display = 'none';
+                document.getElementById('changePwForm').style.display = 'block';
+                infoEl.textContent = 'Ilk giris - lutfen parolanizi degistirin';
+                infoEl.classList.add('show');
+                // Get user ID for password change
+                const usersRes = await fetch('/api/users');
+                if (usersRes.ok) {
+                    const users = await usersRes.json();
+                    const u = users.find(u => u.username === data.username);
+                    if (u) loggedInUserId = u.id;
+                }
+            } else {
+                window.location.href = '/admin';
+            }
+        } else {
+            errEl.textContent = data.error || 'Giris basarisiz';
+            errEl.classList.add('show');
+        }
+    } catch (err) {
+        errEl.textContent = 'Baglanti hatasi';
+        errEl.classList.add('show');
+    }
+    btn.textContent = 'Giris Yap';
+    btn.disabled = false;
+}
+
+async function handleChangePw(e) {
+    e.preventDefault();
+    const errEl = document.getElementById('errorMsg');
+    errEl.classList.remove('show');
+    const pw1 = document.getElementById('newPw1').value;
+    const pw2 = document.getElementById('newPw2').value;
+    if (pw1 !== pw2) {
+        errEl.textContent = 'Parolalar eslesmiyor';
+        errEl.classList.add('show');
+        return;
+    }
+    if (!loggedInUserId) {
+        errEl.textContent = 'Kullanici bilgisi alinamadi';
+        errEl.classList.add('show');
+        return;
+    }
+    const btn = document.getElementById('changePwBtn');
+    btn.disabled = true;
+    try {
+        const res = await fetch(`/api/users/${loggedInUserId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pw1 }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            window.location.href = '/admin';
+        } else {
+            errEl.textContent = data.error || data.detail || 'Hata';
+            errEl.classList.add('show');
+        }
+    } catch (err) {
+        errEl.textContent = 'Baglanti hatasi';
+        errEl.classList.add('show');
+    }
+    btn.disabled = false;
+}
+</script>
+</body>
+</html>

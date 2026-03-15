@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robotpos Destek Hattı</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 480px;
+            width: 100%;
+            padding: 24px;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 28px;
+            font-weight: 700;
+            color: #38bdf8;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: #94a3b8;
+            margin-bottom: 40px;
+        }
+
+        .call-button {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            font-size: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 32px;
+            transition: all 0.3s ease;
+            background: #1e40af;
+            color: white;
+            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5);
+        }
+
+        .call-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
+        }
+
+        .call-button.active {
+            background: #dc2626;
+            animation: pulse 2s infinite;
+        }
+
+        .call-button.connecting {
+            background: #d97706;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+            70% { box-shadow: 0 0 0 20px rgba(59, 130, 246, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+
+        .status {
+            font-size: 16px;
+            color: #94a3b8;
+            margin-bottom: 32px;
+            min-height: 24px;
+        }
+
+        .status.connected { color: #4ade80; }
+        .status.error { color: #f87171; }
+
+        .visualizer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            height: 60px;
+            margin-bottom: 24px;
+        }
+
+        .bar {
+            width: 4px;
+            background: #3b82f6;
+            border-radius: 2px;
+            transition: height 0.1s ease;
+            height: 8px;
+        }
+
+        .transcript-box {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 16px;
+            min-height: 120px;
+            max-height: 300px;
+            overflow-y: auto;
+            text-align: left;
+            border: 1px solid #334155;
+        }
+
+        .transcript-box:empty::before {
+            content: 'Konuşma metni burada görünecek...';
+            color: #475569;
+            font-style: italic;
+        }
+
+        .msg {
+            margin-bottom: 8px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .msg.user {
+            background: #1e3a5f;
+            text-align: right;
+        }
+
+        .msg.assistant {
+            background: #1a2744;
+        }
+
+        .msg .role {
+            font-size: 11px;
+            color: #64748b;
+            margin-bottom: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">Robotpos</div>
+        <div class="subtitle">Destek Hattı - Sesli Asistan</div>
+
+        <button class="call-button" id="callBtn" onclick="toggleCall()">📞</button>
+        <div class="status" id="status">Aramayı başlatmak için butona tıklayın</div>
+
+        <div class="visualizer" id="visualizer">
+            <!-- bars injected by JS -->
+        </div>
+
+        <div class="transcript-box" id="transcript"></div>
+    </div>
+
+    <script>
+        let pc = null;
+        let dc = null;
+        let audioEl = null;
+        let localStream = null;
+        let isConnected = false;
+        let analyser = null;
+        let animFrame = null;
+
+        const callBtn = document.getElementById('callBtn');
+        const statusEl = document.getElementById('status');
+        const transcriptEl = document.getElementById('transcript');
+        const visualizerEl = document.getElementById('visualizer');
+
+        // Create visualizer bars
+        const BAR_COUNT = 32;
+        for (let i = 0; i < BAR_COUNT; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'bar';
+            visualizerEl.appendChild(bar);
+        }
+        const bars = visualizerEl.querySelectorAll('.bar');
+
+        function setStatus(text, cls = '') {
+            statusEl.textContent = text;
+            statusEl.className = 'status ' + cls;
+        }
+
+        function addTranscript(role, text) {
+            const div = document.createElement('div');
+            div.className = 'msg ' + role;
+            const roleLabel = document.createElement('div');
+            roleLabel.className = 'role';
+            roleLabel.textContent = role === 'user' ? 'Siz' : 'Asistan';
+            div.appendChild(roleLabel);
+            div.appendChild(document.createTextNode(text));
+            transcriptEl.appendChild(div);
+            transcriptEl.scrollTop = transcriptEl.scrollHeight;
+        }
+
+        function updateVisualizer() {
+            if (!analyser) {
+                bars.forEach(b => b.style.height = '8px');
+                return;
+            }
+            const data = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(data);
+            const step = Math.floor(data.length / BAR_COUNT);
+            for (let i = 0; i < BAR_COUNT; i++) {
+                const val = data[i * step] / 255;
+                bars[i].style.height = Math.max(4, val * 56) + 'px';
+            }
+            animFrame = requestAnimationFrame(updateVisualizer);
+        }
+
+        async function toggleCall() {
+            if (isConnected) {
+                stopCall();
+            } else {
+                await startCall();
+            }
+        }
+
+        async function startCall() {
+            try {
+                callBtn.classList.add('connecting');
+                callBtn.classList.remove('active');
+                setStatus('Bağlanıyor...');
+
+                // Get ephemeral token
+                const tokenRes = await fetch('/api/session', { method: 'POST' });
+                const sessionData = await tokenRes.json();
+
+                if (!sessionData.client_secret) {
+                    throw new Error(sessionData.error?.message || 'Session oluşturulamadı');
+                }
+
+                const ephemeralKey = sessionData.client_secret.value;
+
+                // Create peer connection
+                pc = new RTCPeerConnection();
+
+                // Set up remote audio playback
+                audioEl = document.createElement('audio');
+                audioEl.autoplay = true;
+                pc.ontrack = (e) => {
+                    audioEl.srcObject = e.streams[0];
+                    // Set up analyser for visualizer
+                    const ctx = new AudioContext();
+                    const source = ctx.createMediaStreamSource(e.streams[0]);
+                    analyser = ctx.createAnalyser();
+                    analyser.fftSize = 256;
+                    source.connect(analyser);
+                    updateVisualizer();
+                };
+
+                // Get microphone
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+                // Create data channel for events
+                dc = pc.createDataChannel('oai-events');
+                dc.onmessage = handleServerEvent;
+
+                // Create and set local SDP offer
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                // Send offer to OpenAI Realtime API
+                const sdpRes = await fetch(
+                    'https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${ephemeralKey}`,
+                            'Content-Type': 'application/sdp',
+                        },
+                        body: offer.sdp,
+                    }
+                );
+
+                const answerSdp = await sdpRes.text();
+                await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+                isConnected = true;
+                callBtn.classList.remove('connecting');
+                callBtn.classList.add('active');
+                callBtn.textContent = '🔴';
+                setStatus('Bağlandı - Konuşabilirsiniz', 'connected');
+
+            } catch (err) {
+                console.error(err);
+                callBtn.classList.remove('connecting');
+                setStatus('Hata: ' + err.message, 'error');
+                stopCall();
+            }
+        }
+
+        function stopCall() {
+            if (pc) { pc.close(); pc = null; }
+            if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                localStream = null;
+            }
+            if (audioEl) { audioEl.srcObject = null; audioEl = null; }
+            if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+            analyser = null;
+            dc = null;
+
+            bars.forEach(b => b.style.height = '8px');
+
+            isConnected = false;
+            callBtn.classList.remove('active', 'connecting');
+            callBtn.textContent = '📞';
+            setStatus('Arama sonlandırıldı');
+        }
+
+        // Accumulate transcript deltas
+        let assistantBuffer = '';
+        let userBuffer = '';
+
+        function handleServerEvent(e) {
+            const event = JSON.parse(e.data);
+
+            switch (event.type) {
+                case 'response.audio_transcript.delta':
+                    assistantBuffer += event.delta;
+                    break;
+
+                case 'response.audio_transcript.done':
+                    if (assistantBuffer.trim()) {
+                        addTranscript('assistant', assistantBuffer.trim());
+                    }
+                    assistantBuffer = '';
+                    break;
+
+                case 'conversation.item.input_audio_transcription.completed':
+                    if (event.transcript && event.transcript.trim()) {
+                        addTranscript('user', event.transcript.trim());
+                    }
+                    break;
+
+                case 'error':
+                    console.error('Realtime API error:', event.error);
+                    setStatus('Hata: ' + (event.error?.message || 'Bilinmeyen hata'), 'error');
+                    break;
+
+                case 'session.created':
+                    console.log('Session created');
+                    break;
+
+                case 'session.updated':
+                    console.log('Session updated');
+                    break;
+            }
+        }
+    </script>
+</body>
+</html>

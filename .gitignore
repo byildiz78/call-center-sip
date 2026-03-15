@@ -1,0 +1,54 @@
+# Environment variables - SENSITIVE
+.env
+.env.*
+.env.local
+.env.production
+
+# Data directory - contains sensitive files (jwt secret, database)
+data/
+
+# Recordings
+recordings/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Node.js
+node_modules/
+package-lock.json
+yarn.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude settings (local)
+.claude/
+
+# Logs
+*.log
+logs/
+
+# Test files
+test_*.py
+create_admin.py
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files
+*.sqlite
+*.sqlite3

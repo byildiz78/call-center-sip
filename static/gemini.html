@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robotpos Destek Hattı - Gemini</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 480px;
+            width: 100%;
+            padding: 24px;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 28px;
+            font-weight: 700;
+            color: #a78bfa;
+            margin-bottom: 4px;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #7c3aed;
+            color: white;
+            font-size: 11px;
+            padding: 2px 10px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: #94a3b8;
+            margin-bottom: 40px;
+        }
+
+        .call-button {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            font-size: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 32px;
+            transition: all 0.3s ease;
+            background: #6d28d9;
+            color: white;
+            box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.5);
+        }
+
+        .call-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 30px rgba(139, 92, 246, 0.3);
+        }
+
+        .call-button.active {
+            background: #dc2626;
+            animation: pulse 2s infinite;
+        }
+
+        .call-button.connecting {
+            background: #d97706;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+            70% { box-shadow: 0 0 0 20px rgba(139, 92, 246, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+        }
+
+        .status {
+            font-size: 16px;
+            color: #94a3b8;
+            margin-bottom: 32px;
+            min-height: 24px;
+        }
+
+        .status.connected { color: #a78bfa; }
+        .status.error { color: #f87171; }
+
+        .visualizer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            height: 60px;
+            margin-bottom: 24px;
+        }
+
+        .bar {
+            width: 4px;
+            background: #8b5cf6;
+            border-radius: 2px;
+            transition: height 0.1s ease;
+            height: 8px;
+        }
+
+        .transcript-box {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 16px;
+            min-height: 120px;
+            max-height: 300px;
+            overflow-y: auto;
+            text-align: left;
+            border: 1px solid #334155;
+        }
+
+        .transcript-box:empty::before {
+            content: 'Konuşma metni burada görünecek...';
+            color: #475569;
+            font-style: italic;
+        }
+
+        .msg {
+            margin-bottom: 8px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .msg.user {
+            background: #1e3a5f;
+            text-align: right;
+        }
+
+        .msg.assistant {
+            background: #2d1b4e;
+        }
+
+        .msg .role {
+            font-size: 11px;
+            color: #64748b;
+            margin-bottom: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">Robotpos</div>
+        <div class="badge">Gemini Live</div>
+        <div class="subtitle">Destek Hattı - Sesli Asistan</div>
+
+        <button class="call-button" id="callBtn" onclick="toggleCall()">📞</button>
+        <div class="status" id="status">Aramayı başlatmak için butona tıklayın</div>
+
+        <div class="visualizer" id="visualizer"></div>
+
+        <div class="transcript-box" id="transcript"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let localStream = null;
+        let isConnected = false;
+        let audioContext = null;
+        let scriptProcessor = null;
+        let playbackCtx = null;
+        let animFrame = null;
+        let analyserNode = null;
+
+        const callBtn = document.getElementById('callBtn');
+        const statusEl = document.getElementById('status');
+        const transcriptEl = document.getElementById('transcript');
+        const visualizerEl = document.getElementById('visualizer');
+
+        // Create visualizer bars
+        const BAR_COUNT = 32;
+        for (let i = 0; i < BAR_COUNT; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'bar';
+            visualizerEl.appendChild(bar);
+        }
+        const bars = visualizerEl.querySelectorAll('.bar');
+
+        function setStatus(text, cls = '') {
+            statusEl.textContent = text;
+            statusEl.className = 'status ' + cls;
+        }
+
+        function addTranscript(role, text) {
+            const div = document.createElement('div');
+            div.className = 'msg ' + role;
+            const roleLabel = document.createElement('div');
+            roleLabel.className = 'role';
+            roleLabel.textContent = role === 'user' ? 'Siz' : 'Asistan';
+            div.appendChild(roleLabel);
+            div.appendChild(document.createTextNode(text));
+            transcriptEl.appendChild(div);
+            transcriptEl.scrollTop = transcriptEl.scrollHeight;
+        }
+
+        function updateVisualizer() {
+            if (!analyserNode) {
+                bars.forEach(b => b.style.height = '8px');
+                return;
+            }
+            const data = new Uint8Array(analyserNode.frequencyBinCount);
+            analyserNode.getByteFrequencyData(data);
+            const step = Math.floor(data.length / BAR_COUNT);
+            for (let i = 0; i < BAR_COUNT; i++) {
+                const val = data[i * step] / 255;
+                bars[i].style.height = Math.max(4, val * 56) + 'px';
+            }
+            animFrame = requestAnimationFrame(updateVisualizer);
+        }
+
+        // Convert Float32 samples to 16-bit PCM and base64 encode
+        function float32ToPcm16Base64(float32Array) {
+            const pcm16 = new Int16Array(float32Array.length);
+            for (let i = 0; i < float32Array.length; i++) {
+                let s = Math.max(-1, Math.min(1, float32Array[i]));
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            const bytes = new Uint8Array(pcm16.buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        // Seamless PCM audio playback using scheduled BufferSource nodes
+        const PLAYBACK_RATE = 24000;
+        let nextPlayTime = 0;
+
+        function ensurePlaybackCtx() {
+            if (!playbackCtx) {
+                playbackCtx = new AudioContext({ sampleRate: PLAYBACK_RATE });
+                analyserNode = playbackCtx.createAnalyser();
+                analyserNode.fftSize = 256;
+                analyserNode.connect(playbackCtx.destination);
+                updateVisualizer();
+            }
+        }
+
+        function playAudioChunk(base64Data) {
+            ensurePlaybackCtx();
+
+            try {
+                const binaryStr = atob(base64Data);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }
+
+                const pcm16 = new Int16Array(bytes.buffer);
+                const float32 = new Float32Array(pcm16.length);
+                for (let i = 0; i < pcm16.length; i++) {
+                    float32[i] = pcm16[i] / 32768.0;
+                }
+
+                const audioBuffer = playbackCtx.createBuffer(1, float32.length, PLAYBACK_RATE);
+                audioBuffer.getChannelData(0).set(float32);
+
+                const source = playbackCtx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(analyserNode);
+
+                // Schedule seamlessly after the previous chunk
+                const now = playbackCtx.currentTime;
+                if (nextPlayTime < now) {
+                    nextPlayTime = now;
+                }
+                source.start(nextPlayTime);
+                nextPlayTime += audioBuffer.duration;
+            } catch (e) {
+                console.error('Audio playback error:', e);
+            }
+        }
+
+        function resetPlayback() {
+            nextPlayTime = 0;
+        }
+
+        async function toggleCall() {
+            if (isConnected) {
+                stopCall();
+            } else {
+                await startCall();
+            }
+        }
+
+        async function startCall() {
+            try {
+                callBtn.classList.add('connecting');
+                setStatus('Bağlanıyor...');
+
+                // Get microphone
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                    }
+                });
+
+                // Set up audio processing to send PCM to server
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(localStream);
+
+                // Use ScriptProcessorNode to capture raw PCM
+                scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                let sendAudio = false;
+
+                scriptProcessor.onaudioprocess = (e) => {
+                    if (!sendAudio || !ws || ws.readyState !== WebSocket.OPEN) return;
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const base64 = float32ToPcm16Base64(inputData);
+                    ws.send(JSON.stringify({ type: 'audio', data: base64 }));
+                };
+
+                source.connect(scriptProcessor);
+                scriptProcessor.connect(audioContext.destination);
+
+                // Connect WebSocket to our backend
+                const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+                ws.onopen = () => {
+                    console.log('WebSocket connected to backend');
+                };
+
+                ws.onmessage = (e) => {
+                    const msg = JSON.parse(e.data);
+
+                    switch (msg.type) {
+                        case 'setup_complete':
+                            sendAudio = true;
+                            isConnected = true;
+                            callBtn.classList.remove('connecting');
+                            callBtn.classList.add('active');
+                            callBtn.textContent = '🔴';
+                            setStatus('Bağlandı - Konuşabilirsiniz', 'connected');
+                            break;
+
+                        case 'audio':
+                            playAudioChunk(msg.data);
+                            break;
+
+                        case 'text':
+                            if (msg.text && msg.text.trim()) {
+                                addTranscript('assistant', msg.text.trim());
+                            }
+                            break;
+
+                        case 'turn_complete':
+                            console.log('Turn complete');
+                            resetPlayback();
+                            break;
+
+                        case 'error':
+                            console.error('Server error:', msg.message);
+                            setStatus('Hata: ' + msg.message, 'error');
+                            break;
+                    }
+                };
+
+                ws.onerror = (err) => {
+                    console.error('WebSocket error:', err);
+                    setStatus('Bağlantı hatası', 'error');
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket closed');
+                    if (isConnected) {
+                        stopCall();
+                        setStatus('Bağlantı kapandı');
+                    }
+                };
+
+            } catch (err) {
+                console.error(err);
+                callBtn.classList.remove('connecting');
+                setStatus('Hata: ' + err.message, 'error');
+                stopCall();
+            }
+        }
+
+        function stopCall() {
+            if (ws) {
+                try { ws.send(JSON.stringify({ type: 'end' })); } catch (e) {}
+                ws.close();
+                ws = null;
+            }
+            if (scriptProcessor) {
+                scriptProcessor.disconnect();
+                scriptProcessor = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                localStream = null;
+            }
+            if (animFrame) {
+                cancelAnimationFrame(animFrame);
+                animFrame = null;
+            }
+            analyserNode = null;
+            nextPlayTime = 0;
+
+            bars.forEach(b => b.style.height = '8px');
+
+            isConnected = false;
+            callBtn.classList.remove('active', 'connecting');
+            callBtn.textContent = '📞';
+            setStatus('Arama sonlandırıldı');
+        }
+    </script>
+</body>
+</html>

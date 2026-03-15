@@ -1,0 +1,14 @@
+{
+  "name": "robotpos-jambonz-app",
+  "version": "1.0.0",
+  "description": "jambonz call handler for Robotpos AI Call Center",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@jambonz/node-client-ws": "^0.8.0",
+    "dotenv": "^16.4.0",
+    "pino": "^9.0.0"
+  }
+}
