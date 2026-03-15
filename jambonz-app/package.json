@@ -7,7 +7,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@jambonz/node-client-ws": "^0.8.0",
+    "@jambonz/node-client-ws": "^0.2.13",
     "dotenv": "^16.4.0",
     "pino": "^9.0.0"
   }
