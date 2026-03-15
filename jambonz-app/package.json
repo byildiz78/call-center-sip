@@ -1,14 +1,16 @@
 {
-  "name": "robotpos-jambonz-app",
+  "name": "robotpos-sip-handler",
   "version": "1.0.0",
-  "description": "jambonz call handler for Robotpos AI Call Center",
+  "description": "SIP call handler - bridges calls to AI agent",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@jambonz/node-client-ws": "^0.2.13",
+    "drachtio-srf": "^4.5.0",
+    "drachtio-fsmrf": "^3.2.0",
     "dotenv": "^16.4.0",
-    "pino": "^9.0.0"
+    "pino": "^9.0.0",
+    "ws": "^8.18.0"
   }
 }
