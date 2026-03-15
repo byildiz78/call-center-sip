@@ -132,6 +132,8 @@ services:
       ENCRYPTION_SECRET: jambonz-encryption-secret-2024
       JAMBONES_LOGLEVEL: info
       K8S: 0
+      K8S_FEATURE_SERVER_SERVICE_NAME: feature-server
+      JAMBONES_FEATURE_SERVERS: feature-server:3000
     depends_on:
       mysql:
         condition: service_healthy
@@ -154,6 +156,8 @@ services:
       ENCRYPTION_SECRET: jambonz-encryption-secret-2024
       JAMBONES_LOGLEVEL: info
       K8S: 0
+      K8S_FEATURE_SERVER_SERVICE_NAME: feature-server
+      JAMBONES_FEATURE_SERVERS: feature-server:3000
     depends_on:
       mysql:
         condition: service_healthy
@@ -176,6 +180,8 @@ services:
       ENCRYPTION_SECRET: jambonz-encryption-secret-2024
       JAMBONES_LOGLEVEL: info
       K8S: 0
+      K8S_FEATURE_SERVER_SERVICE_NAME: feature-server
+      JAMBONES_FEATURE_SERVERS: feature-server:3000
     depends_on:
       mysql:
         condition: service_healthy
@@ -198,6 +204,8 @@ services:
       ENCRYPTION_SECRET: jambonz-encryption-secret-2024
       JAMBONES_LOGLEVEL: info
       K8S: 0
+      K8S_FEATURE_SERVER_SERVICE_NAME: feature-server
+      JAMBONES_FEATURE_SERVERS: feature-server:3000
     depends_on:
       mysql:
         condition: service_healthy
