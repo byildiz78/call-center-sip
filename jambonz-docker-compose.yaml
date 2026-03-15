@@ -1,0 +1,189 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: JambonzR00t!
+      MYSQL_DATABASE: jambones
+      MYSQL_USER: jambones
+      MYSQL_PASSWORD: Jambonz2024!
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pJambonzR00t!"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+
+  db-create:
+    image: jambonz/db-create:latest
+    environment:
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambones
+      JAMBONES_MYSQL_PASSWORD: Jambonz2024!
+      JAMBONES_MYSQL_DATABASE: jambones
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  api-server:
+    image: jambonz/api-server:latest
+    ports:
+      - "3002:3000"
+    environment:
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambones
+      JAMBONES_MYSQL_PASSWORD: Jambonz2024!
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      JAMBONES_LOGLEVEL: info
+      HTTP_PORT: 3000
+      HOMER_BASE_URL: http://localhost
+      HOMER_USERNAME: admin
+      HOMER_PASSWORD: admin
+      ENCRYPTION_SECRET: jambonz-encryption-secret-2024
+      JWT_SECRET: jambonz-jwt-secret-2024
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: always
+
+  feature-server:
+    image: jambonz/feature-server:latest
+    ports:
+      - "3000:3000"
+    environment:
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambones
+      JAMBONES_MYSQL_PASSWORD: Jambonz2024!
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      JAMBONES_LOGLEVEL: info
+      DRACHTIO_HOST: drachtio
+      DRACHTIO_PORT: 9022
+      DRACHTIO_SECRET: cymru
+      JAMBONES_FREESWITCH: freeswitch:8021:JambonzFSw0rd!
+      ENABLE_METRICS: 0
+      HTTP_PORT: 3000
+      K8S: 0
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: always
+
+  drachtio:
+    image: drachtio/drachtio-server:latest
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+    command: >
+      drachtio --contact "sip:*:5060;transport=udp"
+      --contact "sip:*:5060;transport=tcp"
+      --loglevel info
+      --sofia-loglevel 3
+      --address 0.0.0.0
+      --port 9022
+      --secret cymru
+    restart: always
+
+  freeswitch:
+    image: drachtio/drachtio-freeswitch-mrf:latest
+    restart: always
+
+  sbc-inbound:
+    image: jambonz/sbc-inbound:latest
+    environment:
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambones
+      JAMBONES_MYSQL_PASSWORD: Jambonz2024!
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      DRACHTIO_HOST: drachtio
+      DRACHTIO_PORT: 9022
+      DRACHTIO_SECRET: cymru
+      JAMBONES_LOGLEVEL: info
+      K8S: 0
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: always
+
+  sbc-outbound:
+    image: jambonz/sbc-outbound:latest
+    environment:
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambones
+      JAMBONES_MYSQL_PASSWORD: Jambonz2024!
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      DRACHTIO_HOST: drachtio
+      DRACHTIO_PORT: 9022
+      DRACHTIO_SECRET: cymru
+      JAMBONES_LOGLEVEL: info
+      K8S: 0
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: always
+
+  sbc-call-router:
+    image: jambonz/sbc-call-router:latest
+    environment:
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambones
+      JAMBONES_MYSQL_PASSWORD: Jambonz2024!
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      DRACHTIO_HOST: drachtio
+      DRACHTIO_PORT: 9022
+      DRACHTIO_SECRET: cymru
+      JAMBONES_LOGLEVEL: info
+      K8S: 0
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: always
+
+  sbc-registrar:
+    image: jambonz/sbc-registrar:latest
+    environment:
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambones
+      JAMBONES_MYSQL_PASSWORD: Jambonz2024!
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      DRACHTIO_HOST: drachtio
+      DRACHTIO_PORT: 9022
+      DRACHTIO_SECRET: cymru
+      JAMBONES_LOGLEVEL: info
+      K8S: 0
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: always
+
+volumes:
+  mysql_data:
