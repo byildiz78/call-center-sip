@@ -16,6 +16,7 @@ import re
 import logging
 from contextlib import asynccontextmanager
 
+import asyncio
 from fastapi import FastAPI, WebSocket, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +30,7 @@ from bridge.auth import (
 )
 from bridge.config import BRIDGE_HOST, BRIDGE_PORT, RECORDINGS_DIR
 from bridge.jambonz_handler import handle_jambonz_ws
+from bridge.freeswitch_handler import handle_freeswitch_ws
 from bridge.admin.routes import router as admin_router
 
 logging.basicConfig(
@@ -46,8 +48,12 @@ async def lifespan(app: FastAPI):
     os.makedirs(os.path.dirname(db.DB_PATH) or ".", exist_ok=True)
     await db.init_db()
     await init_users()
+    # Start AudioSocket server for Asterisk
+    from bridge.asterisk_handler import start_audiosocket_server
+    audiosocket_task = asyncio.create_task(start_audiosocket_server())
     logger.info("Bridge server started - recordings: %s", RECORDINGS_DIR)
     yield
+    audiosocket_task.cancel()
     logger.info("Bridge server shutting down")
 
 
@@ -145,6 +151,13 @@ async def public_recording(call_sid: str):
 @app.websocket("/jambonz-ws")
 async def jambonz_websocket(ws: WebSocket):
     await handle_jambonz_ws(ws)
+
+
+# ===== PUBLIC: Freeswitch audio fork WebSocket =====
+
+@app.websocket("/fs-audio")
+async def freeswitch_websocket(ws: WebSocket):
+    await handle_freeswitch_ws(ws)
 
 
 # ===== PROTECTED: Admin API =====

@@ -1,14 +1,14 @@
 /**
  * Robotpos AI Call Center - SIP Call Handler
  *
- * Uses drachtio + freeswitch to receive SIP calls and bridge
- * audio to the Python AI Bridge server via WebSocket.
+ * Uses drachtio + freeswitch to receive SIP calls.
+ * Freeswitch connects to the AI bridge via audio fork (WebSocket).
+ * Bridge returns audio which is played back via freeswitch.
  */
 
 require("dotenv").config();
 const Srf = require("drachtio-srf");
 const Mrf = require("drachtio-fsmrf");
-const WebSocket = require("ws");
 const pino = require("pino");
 
 const logger = pino({ level: "info" });
@@ -19,21 +19,19 @@ const DRACHTIO_SECRET = process.env.DRACHTIO_SECRET || "cymru";
 const FREESWITCH_HOST = process.env.FREESWITCH_HOST || "127.0.0.1";
 const FREESWITCH_PORT = parseInt(process.env.FREESWITCH_PORT || "8021", 10);
 const FREESWITCH_SECRET = process.env.FREESWITCH_SECRET || "JambonzR0ck$";
-const BRIDGE_WS_URL = process.env.BRIDGE_WS_URL || "ws://127.0.0.1:8081/jambonz-ws";
+const BRIDGE_WS_URL = process.env.BRIDGE_WS_URL || "ws://127.0.0.1:8081/fs-audio";
 
-// Prevent crash on uncaught errors
 process.on("uncaughtException", (err) => {
-  logger.error({ err: err.message, stack: err.stack }, "Uncaught exception (non-fatal)");
+  logger.error({ err: err.message }, "Uncaught exception");
 });
 process.on("unhandledRejection", (err) => {
-  logger.error({ err: err?.message || err }, "Unhandled rejection (non-fatal)");
+  logger.error({ err: err?.message || err }, "Unhandled rejection");
 });
 
 const srf = new Srf();
 let mrf;
 let mediaServer;
 
-// Connect to drachtio
 srf.connect({
   host: DRACHTIO_HOST,
   port: DRACHTIO_PORT,
@@ -66,110 +64,55 @@ srf.on("error", (err) => {
   logger.error({ err: err.message }, "drachtio connection error");
 });
 
-// Handle incoming INVITE
 srf.invite(async (req, res) => {
   const callId = req.get("Call-ID");
   const fromHeader = req.getParsedHeader("From");
   const callerNumber = fromHeader.uri || "";
-  const toHeader = req.getParsedHeader("To");
-  const calledNumber = toHeader.uri || "";
 
-  logger.info({ callId, from: callerNumber, to: calledNumber }, "Incoming SIP INVITE");
+  logger.info({ callId, from: callerNumber }, "Incoming SIP INVITE");
 
   if (!mediaServer) {
-    logger.error("No media server available, rejecting call");
-    res.send(503);
-    return;
+    logger.error("No media server, rejecting");
+    return res.send(503);
   }
 
-  let ep, dialog, bridgeWs;
+  let ep, dialog;
 
   try {
-    // Create endpoint on freeswitch
     ep = await mediaServer.createEndpoint();
-    logger.info({ callId }, "Freeswitch endpoint created");
+    logger.info({ callId }, "Endpoint created");
 
-    // Answer the call
-    dialog = await srf.createUAS(req, res, {
-      localSdp: ep.local.sdp,
-    });
+    dialog = await srf.createUAS(req, res, { localSdp: ep.local.sdp });
     logger.info({ callId }, "Call answered");
 
-    // Connect to AI bridge via WebSocket
-    bridgeWs = new WebSocket(BRIDGE_WS_URL, "audio.jambonz.org");
-
-    await new Promise((resolve, reject) => {
-      bridgeWs.on("open", resolve);
-      bridgeWs.on("error", reject);
-      setTimeout(() => reject(new Error("Bridge WS timeout")), 5000);
-    });
-
-    logger.info({ callId }, "Connected to AI bridge");
-
-    // Send session:new message
-    bridgeWs.send(
-      JSON.stringify({
-        type: "session:new",
+    // Fork audio to bridge WebSocket
+    // This sends caller's audio as L16 PCM via WebSocket
+    await ep.forkAudioStart({
+      wsUrl: BRIDGE_WS_URL,
+      sampling: "8k",
+      mix: "mono",
+      metadata: JSON.stringify({
         callSid: callId,
         from: callerNumber,
-        to: calledNumber,
-      })
-    );
-
-    // Fork audio from freeswitch to bridge WebSocket
-    try {
-      await ep.forkAudioStart({
-        wsUrl: BRIDGE_WS_URL,
-        sampling: "8k",
-        mix: "mono",
-      });
-      logger.info({ callId }, "Audio fork started");
-    } catch (forkErr) {
-      logger.warn({ callId, err: forkErr.message }, "forkAudioStart failed, using fallback");
-    }
-
-    // Receive audio from bridge and play to caller via freeswitch
-    bridgeWs.on("message", (data) => {
-      if (Buffer.isBuffer(data) && ep) {
-        // Raw PCM audio from bridge
-        try {
-          ep.conn.execute("playback", `say:${data.toString("base64")}`);
-        } catch (e) {}
-      }
+      }),
     });
-
-    bridgeWs.on("close", () => {
-      logger.info({ callId }, "Bridge WebSocket closed, ending call");
-      if (dialog) dialog.destroy().catch(() => {});
-    });
-
-    bridgeWs.on("error", (err) => {
-      logger.error({ callId, err: err.message }, "Bridge WebSocket error");
-    });
+    logger.info({ callId }, "Audio fork started to bridge");
 
     // Handle call hangup
     dialog.on("destroy", () => {
-      logger.info({ callId }, "Call ended by caller");
-      cleanup();
+      logger.info({ callId }, "Call ended");
+      if (ep) {
+        ep.forkAudioStop().catch(() => {});
+        ep.destroy().catch(() => {});
+        ep = null;
+      }
     });
 
   } catch (err) {
     logger.error({ callId, err: err.message }, "Error handling call");
-    cleanup();
+    if (ep) ep.destroy().catch(() => {});
+    if (dialog) dialog.destroy().catch(() => {});
     try { res.send(500); } catch (e) {}
-  }
-
-  function cleanup() {
-    if (ep) {
-      try { ep.forkAudioStop(); } catch (e) {}
-      try { ep.destroy(); } catch (e) {}
-      ep = null;
-    }
-    if (bridgeWs && bridgeWs.readyState === WebSocket.OPEN) {
-      bridgeWs.close();
-    }
-    bridgeWs = null;
-    dialog = null;
   }
 });
 
