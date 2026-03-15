@@ -179,8 +179,12 @@ async def browser_websocket(ws: WebSocket):
     # Check auth
     username = await ws_auth(ws)
     if not username:
+        logger.warning("WS auth failed - cookies: %s", dict(ws.cookies))
+        await ws.accept()
+        await ws.send_json({"type": "error", "message": "Oturum gecersiz, tekrar giris yapin"})
         await ws.close(code=4001, reason="Unauthorized")
         return
+    logger.info("WS auth OK for user: %s", username)
 
     await ws.accept()
 
