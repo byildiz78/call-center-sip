@@ -104,22 +104,27 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
 
     call_ended = asyncio.Event()
 
+    audio_frame_count = 0
+
     async def asterisk_to_gemini():
         """Read audio from Asterisk, send to Gemini."""
+        nonlocal audio_frame_count
         try:
             while not call_ended.is_set():
                 frame_type, payload = await read_frame(reader)
                 if frame_type == TYPE_AUDIO and payload:
-                    # payload is slin 8kHz 16-bit PCM
+                    audio_frame_count += 1
+                    if audio_frame_count == 1:
+                        logger.info("First audio frame: %d bytes (call %s)", len(payload), call_sid)
                     recorder.write_caller(payload)
-                    # Resample 8kHz → 16kHz for Gemini
                     pcm_16k = resample(payload, 8000, 16000)
                     b64 = base64.b64encode(pcm_16k).decode("ascii")
                     await gemini.send_audio(b64)
-                elif frame_type == TYPE_ERROR or frame_type == TYPE_SILENCE:
-                    pass  # ignore
-                elif frame_type == TYPE_UUID:
-                    pass  # duplicate UUID, ignore
+                elif frame_type == TYPE_ERROR:
+                    logger.info("Error frame received for %s", call_sid)
+                    break
+                elif frame_type == TYPE_SILENCE or frame_type == TYPE_UUID:
+                    pass
         except (asyncio.IncompleteReadError, ConnectionResetError):
             logger.info("Asterisk disconnected for %s", call_sid)
         except Exception as e:
