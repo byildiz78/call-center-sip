@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   mysql:
     image: mysql:8.0
@@ -19,6 +17,14 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: always
+
+  influxdb:
+    image: influxdb:1.8-alpine
+    environment:
+      INFLUXDB_DB: jambones_time_series
+    volumes:
+      - influx_data:/var/lib/influxdb
     restart: always
 
   db-create:
@@ -46,6 +52,7 @@ services:
       JAMBONES_REDIS_HOST: redis
       JAMBONES_REDIS_PORT: 6379
       JAMBONES_LOGLEVEL: info
+      JAMBONES_TIME_SERIES_HOST: influxdb
       HTTP_PORT: 3000
       HOMER_BASE_URL: http://localhost
       HOMER_USERNAME: admin
@@ -72,10 +79,13 @@ services:
       JAMBONES_REDIS_HOST: redis
       JAMBONES_REDIS_PORT: 6379
       JAMBONES_LOGLEVEL: info
+      JAMBONES_TIME_SERIES_HOST: influxdb
       DRACHTIO_HOST: drachtio
       DRACHTIO_PORT: 9022
       DRACHTIO_SECRET: cymru
       JAMBONES_FREESWITCH: freeswitch:8021:JambonzFSw0rd!
+      ENCRYPTION_SECRET: jambonz-encryption-secret-2024
+      JWT_SECRET: jambonz-jwt-secret-2024
       ENABLE_METRICS: 0
       HTTP_PORT: 3000
       K8S: 0
@@ -115,9 +125,11 @@ services:
       JAMBONES_MYSQL_DATABASE: jambones
       JAMBONES_REDIS_HOST: redis
       JAMBONES_REDIS_PORT: 6379
+      JAMBONES_TIME_SERIES_HOST: influxdb
       DRACHTIO_HOST: drachtio
       DRACHTIO_PORT: 9022
       DRACHTIO_SECRET: cymru
+      ENCRYPTION_SECRET: jambonz-encryption-secret-2024
       JAMBONES_LOGLEVEL: info
       K8S: 0
     depends_on:
@@ -135,9 +147,11 @@ services:
       JAMBONES_MYSQL_DATABASE: jambones
       JAMBONES_REDIS_HOST: redis
       JAMBONES_REDIS_PORT: 6379
+      JAMBONES_TIME_SERIES_HOST: influxdb
       DRACHTIO_HOST: drachtio
       DRACHTIO_PORT: 9022
       DRACHTIO_SECRET: cymru
+      ENCRYPTION_SECRET: jambonz-encryption-secret-2024
       JAMBONES_LOGLEVEL: info
       K8S: 0
     depends_on:
@@ -155,9 +169,11 @@ services:
       JAMBONES_MYSQL_DATABASE: jambones
       JAMBONES_REDIS_HOST: redis
       JAMBONES_REDIS_PORT: 6379
+      JAMBONES_TIME_SERIES_HOST: influxdb
       DRACHTIO_HOST: drachtio
       DRACHTIO_PORT: 9022
       DRACHTIO_SECRET: cymru
+      ENCRYPTION_SECRET: jambonz-encryption-secret-2024
       JAMBONES_LOGLEVEL: info
       K8S: 0
     depends_on:
@@ -175,9 +191,11 @@ services:
       JAMBONES_MYSQL_DATABASE: jambones
       JAMBONES_REDIS_HOST: redis
       JAMBONES_REDIS_PORT: 6379
+      JAMBONES_TIME_SERIES_HOST: influxdb
       DRACHTIO_HOST: drachtio
       DRACHTIO_PORT: 9022
       DRACHTIO_SECRET: cymru
+      ENCRYPTION_SECRET: jambonz-encryption-secret-2024
       JAMBONES_LOGLEVEL: info
       K8S: 0
     depends_on:
@@ -187,3 +205,4 @@ services:
 
 volumes:
   mysql_data:
+  influx_data:
