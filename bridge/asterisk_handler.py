@@ -193,30 +193,71 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
             call_ended.set()
 
     async def gemini_to_asterisk():
-        """Read audio from Gemini, resample 24kHz → 8kHz, send as 320-byte frames."""
+        """Read audio from Gemini, buffer, resample 24kHz → 8kHz, pace at 20ms."""
         FRAME_SIZE = 320  # 20ms @ 8kHz 16-bit mono
-        try:
-            async for chunk in gemini.receive():
-                if call_ended.is_set():
-                    break
-                if chunk.audio_b64:
-                    pcm_24k = base64.b64decode(chunk.audio_b64)
-                    recorder.write_agent(pcm_24k)
-                    pcm_8k = resample(pcm_24k, 24000, 8000)
-                    # Send in 320-byte frames
-                    for offset in range(0, len(pcm_8k), FRAME_SIZE):
-                        frame_data = pcm_8k[offset:offset + FRAME_SIZE]
-                        if len(frame_data) < FRAME_SIZE:
-                            frame_data = frame_data + b'\x00' * (FRAME_SIZE - len(frame_data))
+        FRAME_DURATION = 0.02  # 20ms
+        PREBUFFER_MS = 200  # Buffer 200ms before starting playback
+        PREBUFFER_BYTES = int(8000 * 2 * PREBUFFER_MS / 1000)  # 3200 bytes
+
+        pcm_buffer = bytearray()
+        playback_started = False
+        should_end = False
+
+        async def receive_audio():
+            """Receive from Gemini and fill buffer."""
+            nonlocal playback_started, should_end
+            try:
+                async for chunk in gemini.receive():
+                    if call_ended.is_set():
+                        break
+                    if chunk.audio_b64:
+                        pcm_24k = base64.b64decode(chunk.audio_b64)
+                        recorder.write_agent(pcm_24k)
+                        pcm_8k = resample(pcm_24k, 24000, 8000)
+                        pcm_buffer.extend(pcm_8k)
+                    if chunk.end_call:
+                        logger.info("Agent end phrase for %s", call_sid)
+                        should_end = True
+            except Exception as e:
+                logger.error("receive_audio error [%s]: %s", call_sid, e)
+
+        async def send_audio():
+            """Send buffered audio at precise 20ms intervals."""
+            nonlocal playback_started
+            try:
+                # Wait for prebuffer to fill
+                while len(pcm_buffer) < PREBUFFER_BYTES and not call_ended.is_set():
+                    await asyncio.sleep(0.01)
+
+                playback_started = True
+                next_send = time.monotonic()
+
+                while not call_ended.is_set():
+                    if len(pcm_buffer) >= FRAME_SIZE:
+                        frame_data = bytes(pcm_buffer[:FRAME_SIZE])
+                        del pcm_buffer[:FRAME_SIZE]
+
                         writer.write(make_frame(TYPE_AUDIO, frame_data))
-                    await writer.drain()
-                if chunk.end_call:
-                    logger.info("Agent end phrase for %s", call_sid)
-                    await asyncio.sleep(1)
-                    call_ended.set()
-                    break
-        except (ConnectionResetError, BrokenPipeError):
-            pass
+                        await writer.drain()
+
+                        next_send += FRAME_DURATION
+                        sleep_time = next_send - time.monotonic()
+                        if sleep_time > 0:
+                            await asyncio.sleep(sleep_time)
+                    elif should_end:
+                        # No more audio and agent said goodbye
+                        await asyncio.sleep(0.5)
+                        call_ended.set()
+                        break
+                    else:
+                        # Buffer underrun - wait for more data
+                        await asyncio.sleep(0.005)
+                        next_send = time.monotonic()
+            except (ConnectionResetError, BrokenPipeError):
+                pass
+
+        try:
+            await asyncio.gather(receive_audio(), send_audio())
         except Exception as e:
             logger.error("gemini_to_asterisk error [%s]: %s", call_sid, e)
         finally:
