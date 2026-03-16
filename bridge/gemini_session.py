@@ -91,15 +91,15 @@ class GeminiSession:
                      self.call_sid, str(setup_data)[:150])
         self._connected = True
 
-        # Trigger greeting: send silence then end-of-turn
+        # Trigger greeting: send silence then signal turn complete
         import base64
         silence_bytes = self.input_sample_rate  # ~500ms silence
         silence = base64.b64encode(b"\x00" * silence_bytes).decode("ascii")
         await self.send_audio(silence, sample_rate=self.input_sample_rate)
 
-        # Signal turn complete so Gemini responds with greeting
         turn_msg = {
             "clientContent": {
+                "turns": [{"role": "user", "parts": [{"text": "."}]}],
                 "turnComplete": True,
             }
         }
