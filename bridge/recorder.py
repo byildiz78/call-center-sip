@@ -26,8 +26,9 @@ TURN_GAP_SECONDS = 0.3
 class CallRecorder:
     """Records a call as a stereo WAV file (caller=left, agent=right)."""
 
-    def __init__(self, call_sid: str):
+    def __init__(self, call_sid: str, caller_rate: int = 16000):
         self.call_sid = call_sid
+        self.caller_rate = caller_rate
         self._start_time: float = time.monotonic()
         self._caller_entries: list[tuple[float, bytes]] = []
         self._agent_entries: list[tuple[float, bytes]] = []
@@ -56,23 +57,25 @@ class CallRecorder:
             return self.filepath
 
         # --- Determine total duration from caller stream ---
+        # Output WAV is always at caller_rate (8kHz for SIP, 16kHz for web)
+        out_rate = self.caller_rate
         total_duration = 0.0
         if self._caller_entries:
             last_ts, last_pcm = self._caller_entries[-1]
-            total_duration = (last_ts - self._start_time) + len(last_pcm) / (SAMPLE_RATE * SAMPLE_WIDTH)
+            total_duration = (last_ts - self._start_time) + len(last_pcm) / (out_rate * SAMPLE_WIDTH)
 
-        total_samples_16k = int(total_duration * SAMPLE_RATE) + SAMPLE_RATE
+        total_samples_out = int(total_duration * out_rate) + out_rate
         total_samples_24k = int(total_duration * AGENT_NATIVE_RATE) + AGENT_NATIVE_RATE
 
-        # --- Left channel: caller at 16kHz (continuous, timestamp-based) ---
-        left = array.array("h", [0] * total_samples_16k)
+        # --- Left channel: caller at native rate (timestamp-based) ---
+        left = array.array("h", [0] * total_samples_out)
         for ts_val, pcm in self._caller_entries:
-            offset = int((ts_val - self._start_time) * SAMPLE_RATE)
+            offset = int((ts_val - self._start_time) * out_rate)
             chunk = array.array("h")
             chunk.frombytes(pcm)
             for i, s in enumerate(chunk):
                 pos = offset + i
-                if 0 <= pos < total_samples_16k:
+                if 0 <= pos < total_samples_out:
                     left[pos] = s
 
         # --- Right channel: agent at 24kHz (contiguous within turns) ---
@@ -104,10 +107,10 @@ class CallRecorder:
             agent_write_pos += chunk_samples
             prev_arrival = ts_val
 
-        # Single resample of the entire agent channel 24kHz → 16kHz
-        right_16k_bytes = resample(right_24k.tobytes(), AGENT_NATIVE_RATE, SAMPLE_RATE)
+        # Single resample of the entire agent channel 24kHz → output rate
+        right_out_bytes = resample(right_24k.tobytes(), AGENT_NATIVE_RATE, out_rate)
         right = array.array("h")
-        right.frombytes(right_16k_bytes)
+        right.frombytes(right_out_bytes)
 
         # Match channel lengths
         final_len = min(len(left), len(right))
@@ -121,7 +124,7 @@ class CallRecorder:
         with wave.open(self.filepath, "wb") as wf:
             wf.setnchannels(CHANNELS_STEREO)
             wf.setsampwidth(SAMPLE_WIDTH)
-            wf.setframerate(SAMPLE_RATE)
+            wf.setframerate(out_rate)
             wf.writeframes(stereo.tobytes())
 
         # Restrict file permissions (owner read/write only)

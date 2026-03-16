@@ -127,7 +127,7 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
         return
 
     start_time = time.time()
-    recorder = CallRecorder(call_sid)
+    recorder = CallRecorder(call_sid, caller_rate=8000)
     gemini = GeminiSession(call_sid, input_sample_rate=8000)
     settings = get_settings()
     max_duration = settings.get("max_call_duration", 90)
