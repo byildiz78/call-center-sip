@@ -17,6 +17,7 @@ Protocol:
 import asyncio
 import base64
 import logging
+import os
 import struct
 import time
 import uuid
@@ -30,50 +31,21 @@ from bridge import db
 logger = logging.getLogger(__name__)
 
 AUDIOSOCKET_PORT = 9093
-AMI_HOST = "127.0.0.1"
-AMI_PORT = 5038
-AMI_USER = "bridge"
-AMI_SECRET = "robotpos2024"
 
 
-async def get_caller_number_ami() -> str:
-    """Get the most recent caller number from Asterisk AMI."""
+async def get_caller_number() -> str:
+    """Get caller number from temp file written by Asterisk dialplan."""
+    import glob
     try:
-        reader, writer = await asyncio.open_connection(AMI_HOST, AMI_PORT)
-        await reader.readline()  # Read banner
-
-        # Login
-        writer.write(f"Action: Login\r\nUsername: {AMI_USER}\r\nSecret: {AMI_SECRET}\r\n\r\n".encode())
-        await writer.drain()
-
-        # Read login response
-        while True:
-            line = await asyncio.wait_for(reader.readline(), timeout=2)
-            if b"Response: Success" in line or b"Response: Error" in line:
-                break
-
-        # Get active channels
-        writer.write(b"Action: CoreShowChannels\r\n\r\n")
-        await writer.drain()
-
-        caller = "unknown"
-        while True:
-            line = await asyncio.wait_for(reader.readline(), timeout=2)
-            decoded = line.decode("utf-8", errors="ignore").strip()
-            if decoded.startswith("CallerIDnum:"):
-                num = decoded.split(":", 1)[1].strip()
-                if num and num != "<unknown>":
-                    caller = num
-            if "EventList: Complete" in decoded or not decoded:
-                break
-
-        writer.write(b"Action: Logoff\r\n\r\n")
-        await writer.drain()
-        writer.close()
-        return caller
+        files = sorted(glob.glob("/tmp/last_caller_*.txt"), key=os.path.getmtime, reverse=True)
+        if files:
+            with open(files[0], "r") as f:
+                num = f.read().strip()
+                if num:
+                    return num
     except Exception as e:
-        logger.warning("AMI error: %s", e)
-        return "unknown"
+        logger.warning("Failed to read caller number: %s", e)
+    return "unknown"
 
 # AudioSocket frame types
 TYPE_UUID = 0x01
@@ -132,8 +104,8 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     settings = get_settings()
     max_duration = settings.get("max_call_duration", 90)
 
-    # Get caller number via AMI
-    caller_number = await get_caller_number_ami()
+    # Get caller number from file written by Asterisk dialplan
+    caller_number = await get_caller_number()
     logger.info("Caller number: %s", caller_number)
 
     await db.create_call(call_sid, caller_number)

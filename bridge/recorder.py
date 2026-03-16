@@ -24,7 +24,12 @@ TURN_GAP_SECONDS = 0.3
 
 
 class CallRecorder:
-    """Records a call as a stereo WAV file (caller=left, agent=right)."""
+    """Records a call as a stereo WAV file (caller=left, agent=right).
+
+    Output is always 16kHz stereo WAV regardless of input rates.
+    Caller audio is resampled from caller_rate to 16kHz if needed.
+    Agent audio is always resampled from 24kHz to 16kHz.
+    """
 
     def __init__(self, call_sid: str, caller_rate: int = 16000):
         self.call_sid = call_sid
@@ -56,20 +61,22 @@ class CallRecorder:
                 wf.writeframes(b"")
             return self.filepath
 
-        # --- Determine total duration from caller stream ---
-        # Output WAV is always at caller_rate (8kHz for SIP, 16kHz for web)
-        out_rate = self.caller_rate
+        # --- Output is always 16kHz ---
+        out_rate = SAMPLE_RATE  # 16000
         total_duration = 0.0
         if self._caller_entries:
             last_ts, last_pcm = self._caller_entries[-1]
-            total_duration = (last_ts - self._start_time) + len(last_pcm) / (out_rate * SAMPLE_WIDTH)
+            total_duration = (last_ts - self._start_time) + len(last_pcm) / (self.caller_rate * SAMPLE_WIDTH)
 
         total_samples_out = int(total_duration * out_rate) + out_rate
         total_samples_24k = int(total_duration * AGENT_NATIVE_RATE) + AGENT_NATIVE_RATE
 
-        # --- Left channel: caller at native rate (timestamp-based) ---
+        # --- Left channel: caller resampled to 16kHz (timestamp-based) ---
         left = array.array("h", [0] * total_samples_out)
         for ts_val, pcm in self._caller_entries:
+            # Resample caller audio to output rate if needed
+            if self.caller_rate != out_rate:
+                pcm = resample(pcm, self.caller_rate, out_rate)
             offset = int((ts_val - self._start_time) * out_rate)
             chunk = array.array("h")
             chunk.frombytes(pcm)
