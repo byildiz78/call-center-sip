@@ -105,14 +105,14 @@ class GeminiSession:
         }
         await self.ws.send(json.dumps(turn_msg))
 
-    async def send_audio(self, pcm_b64: str):
-        """Send a base64-encoded PCM 16kHz audio chunk to Gemini."""
+    async def send_audio(self, pcm_b64: str, sample_rate: int = 16000):
+        """Send a base64-encoded PCM audio chunk to Gemini."""
         if not self.ws or not self._connected:
             return
         msg = {
             "realtimeInput": {
                 "mediaChunks": [
-                    {"mimeType": "audio/pcm;rate=16000", "data": pcm_b64}
+                    {"mimeType": f"audio/pcm;rate={sample_rate}", "data": pcm_b64}
                 ]
             }
         }
