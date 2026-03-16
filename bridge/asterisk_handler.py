@@ -30,6 +30,50 @@ from bridge import db
 logger = logging.getLogger(__name__)
 
 AUDIOSOCKET_PORT = 9093
+AMI_HOST = "127.0.0.1"
+AMI_PORT = 5038
+AMI_USER = "bridge"
+AMI_SECRET = "robotpos2024"
+
+
+async def get_caller_number_ami() -> str:
+    """Get the most recent caller number from Asterisk AMI."""
+    try:
+        reader, writer = await asyncio.open_connection(AMI_HOST, AMI_PORT)
+        await reader.readline()  # Read banner
+
+        # Login
+        writer.write(f"Action: Login\r\nUsername: {AMI_USER}\r\nSecret: {AMI_SECRET}\r\n\r\n".encode())
+        await writer.drain()
+
+        # Read login response
+        while True:
+            line = await asyncio.wait_for(reader.readline(), timeout=2)
+            if b"Response: Success" in line or b"Response: Error" in line:
+                break
+
+        # Get active channels
+        writer.write(b"Action: CoreShowChannels\r\n\r\n")
+        await writer.drain()
+
+        caller = "unknown"
+        while True:
+            line = await asyncio.wait_for(reader.readline(), timeout=2)
+            decoded = line.decode("utf-8", errors="ignore").strip()
+            if decoded.startswith("CallerIDnum:"):
+                num = decoded.split(":", 1)[1].strip()
+                if num and num != "<unknown>":
+                    caller = num
+            if "EventList: Complete" in decoded or not decoded:
+                break
+
+        writer.write(b"Action: Logoff\r\n\r\n")
+        await writer.drain()
+        writer.close()
+        return caller
+    except Exception as e:
+        logger.warning("AMI error: %s", e)
+        return "unknown"
 
 # AudioSocket frame types
 TYPE_UUID = 0x01
@@ -88,8 +132,9 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     settings = get_settings()
     max_duration = settings.get("max_call_duration", 90)
 
-    # Get caller info from Asterisk (channel variable)
-    caller_number = "unknown"
+    # Get caller number via AMI
+    caller_number = await get_caller_number_ami()
+    logger.info("Caller number: %s", caller_number)
 
     await db.create_call(call_sid, caller_number)
 
@@ -107,8 +152,11 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     audio_frame_count = 0
 
     async def asterisk_to_gemini():
-        """Read audio from Asterisk, send to Gemini."""
+        """Read audio from Asterisk, buffer and send to Gemini."""
         nonlocal audio_frame_count
+        audio_buffer = bytearray()
+        # Buffer ~100ms of audio before sending (5 frames of 20ms @ 8kHz = 3200 bytes)
+        BUFFER_SIZE = 3200
         try:
             while not call_ended.is_set():
                 frame_type, payload = await read_frame(reader)
@@ -116,15 +164,26 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                     audio_frame_count += 1
                     if audio_frame_count == 1:
                         logger.info("First audio frame: %d bytes (call %s)", len(payload), call_sid)
-                    recorder.write_caller(payload)
-                    pcm_16k = resample(payload, 8000, 16000)
-                    b64 = base64.b64encode(pcm_16k).decode("ascii")
-                    await gemini.send_audio(b64)
+                    audio_buffer.extend(payload)
+                    if len(audio_buffer) >= BUFFER_SIZE:
+                        chunk = bytes(audio_buffer)
+                        audio_buffer.clear()
+                        recorder.write_caller(chunk)
+                        pcm_16k = resample(chunk, 8000, 16000)
+                        b64 = base64.b64encode(pcm_16k).decode("ascii")
+                        await gemini.send_audio(b64)
                 elif frame_type == TYPE_ERROR:
                     logger.info("Error frame received for %s", call_sid)
                     break
                 elif frame_type == TYPE_SILENCE or frame_type == TYPE_UUID:
                     pass
+            # Flush remaining buffer
+            if audio_buffer:
+                chunk = bytes(audio_buffer)
+                recorder.write_caller(chunk)
+                pcm_16k = resample(chunk, 8000, 16000)
+                b64 = base64.b64encode(pcm_16k).decode("ascii")
+                await gemini.send_audio(b64)
         except (asyncio.IncompleteReadError, ConnectionResetError):
             logger.info("Asterisk disconnected for %s", call_sid)
         except Exception as e:
