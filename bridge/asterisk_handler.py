@@ -196,15 +196,17 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
         """Read audio from Gemini, buffer, resample 24kHz → 8kHz, pace at 20ms."""
         FRAME_SIZE = 320  # 20ms @ 8kHz 16-bit mono
         FRAME_DURATION = 0.02  # 20ms
-        PREBUFFER_MS = 200  # Buffer 200ms before starting playback
-        PREBUFFER_BYTES = int(8000 * 2 * PREBUFFER_MS / 1000)  # 3200 bytes
+        PREBUFFER_MS = 300  # Buffer 300ms before starting playback
+        PREBUFFER_BYTES = int(8000 * 2 * PREBUFFER_MS / 1000)  # 4800 bytes
 
         pcm_buffer = bytearray()
+        raw_24k_buffer = bytearray()  # Accumulate 24kHz before resampling
+        RAW_FLUSH_SIZE = 4800  # ~100ms of 24kHz audio (24000*2*0.1)
         playback_started = False
         should_end = False
 
         async def receive_audio():
-            """Receive from Gemini and fill buffer."""
+            """Receive from Gemini, batch-resample, fill playback buffer."""
             nonlocal playback_started, should_end
             try:
                 async for chunk in gemini.receive():
@@ -213,11 +215,20 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                     if chunk.audio_b64:
                         pcm_24k = base64.b64decode(chunk.audio_b64)
                         recorder.write_agent(pcm_24k)
-                        pcm_8k = resample(pcm_24k, 24000, 8000)
-                        pcm_buffer.extend(pcm_8k)
+                        raw_24k_buffer.extend(pcm_24k)
+                        # Batch resample when enough accumulated
+                        if len(raw_24k_buffer) >= RAW_FLUSH_SIZE:
+                            pcm_8k = resample(bytes(raw_24k_buffer), 24000, 8000)
+                            pcm_buffer.extend(pcm_8k)
+                            raw_24k_buffer.clear()
                     if chunk.end_call:
                         logger.info("Agent end phrase for %s", call_sid)
                         should_end = True
+                # Flush remaining 24k buffer
+                if raw_24k_buffer:
+                    pcm_8k = resample(bytes(raw_24k_buffer), 24000, 8000)
+                    pcm_buffer.extend(pcm_8k)
+                    raw_24k_buffer.clear()
             except Exception as e:
                 logger.error("receive_audio error [%s]: %s", call_sid, e)
 
