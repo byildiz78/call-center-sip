@@ -99,14 +99,34 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
         return
 
     start_time = time.time()
-    recorder = CallRecorder(call_sid, caller_rate=8000)
-    gemini = GeminiSession(call_sid, input_sample_rate=8000)
     settings = get_settings()
     max_duration = settings.get("max_call_duration", 90)
 
     # Get caller number from file written by Asterisk dialplan
     caller_number = await get_caller_number()
     logger.info("Caller number: %s", caller_number)
+
+    # Detect sample rate from first audio frame
+    # 8kHz slin = 320 bytes/20ms, 16kHz slin16 = 640 bytes/20ms
+    detected_rate = 8000  # default
+
+    # Read first audio frame to detect rate
+    first_audio = None
+    try:
+        while True:
+            frame_type, payload = await asyncio.wait_for(read_frame(reader), timeout=5)
+            if frame_type == TYPE_AUDIO and payload:
+                first_audio = payload
+                if len(payload) >= 640:
+                    detected_rate = 16000
+                break
+    except Exception:
+        pass
+
+    logger.info("Detected sample rate: %dHz (frame=%d bytes)", detected_rate, len(first_audio) if first_audio else 0)
+
+    recorder = CallRecorder(call_sid, caller_rate=detected_rate)
+    gemini = GeminiSession(call_sid, input_sample_rate=detected_rate)
 
     await db.create_call(call_sid, caller_number)
 
@@ -119,15 +139,20 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
         writer.close()
         return
 
+    # Process first audio frame
+    if first_audio:
+        recorder.write_caller(first_audio)
+        b64 = base64.b64encode(first_audio).decode("ascii")
+        await gemini.send_audio(b64, sample_rate=detected_rate)
+
     call_ended = asyncio.Event()
 
-    audio_frame_count = 0
-    # Asterisk AudioSocket sends slin 8kHz: 320 bytes per 20ms frame
-    # Buffer ~100ms = 5 frames = 1600 bytes
-    BUFFER_SIZE = 1600
+    audio_frame_count = 1 if first_audio else 0
+    # Buffer ~100ms: 8kHz=1600 bytes, 16kHz=3200 bytes
+    BUFFER_SIZE = 1600 if detected_rate == 8000 else 3200
 
     async def asterisk_to_gemini():
-        """Read 8kHz audio from Asterisk, send directly to Gemini."""
+        """Read audio from Asterisk, send directly to Gemini."""
         nonlocal audio_frame_count
         audio_buffer = bytearray()
         try:
@@ -135,15 +160,15 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                 frame_type, payload = await read_frame(reader)
                 if frame_type == TYPE_AUDIO and payload:
                     audio_frame_count += 1
-                    if audio_frame_count == 1:
-                        logger.info("First audio frame: %d bytes (call %s)", len(payload), call_sid)
+                    if audio_frame_count == 2:
+                        logger.info("Audio streaming: %d bytes/frame @ %dHz (call %s)", len(payload), detected_rate, call_sid)
                     audio_buffer.extend(payload)
                     if len(audio_buffer) >= BUFFER_SIZE:
                         chunk = bytes(audio_buffer)
                         audio_buffer.clear()
                         recorder.write_caller(chunk)
                         b64 = base64.b64encode(chunk).decode("ascii")
-                        await gemini.send_audio(b64, sample_rate=8000)
+                        await gemini.send_audio(b64, sample_rate=detected_rate)
                 elif frame_type == TYPE_ERROR:
                     logger.info("Error frame received for %s", call_sid)
                     break
@@ -153,7 +178,7 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                 chunk = bytes(audio_buffer)
                 recorder.write_caller(chunk)
                 b64 = base64.b64encode(chunk).decode("ascii")
-                await gemini.send_audio(b64, sample_rate=8000)
+                await gemini.send_audio(b64, sample_rate=detected_rate)
         except (asyncio.IncompleteReadError, ConnectionResetError):
             logger.info("Asterisk disconnected for %s", call_sid)
         except Exception as e:
@@ -162,15 +187,15 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
             call_ended.set()
 
     async def gemini_to_asterisk():
-        """Read audio from Gemini, buffer, resample 24kHz → 8kHz, pace at 20ms."""
-        FRAME_SIZE = 320  # 20ms @ 8kHz 16-bit mono
+        """Read audio from Gemini, buffer, resample 24kHz → output rate, pace at 20ms."""
+        FRAME_SIZE = (detected_rate // 8000) * 320  # 320 @ 8kHz, 640 @ 16kHz
         FRAME_DURATION = 0.02  # 20ms
-        PREBUFFER_MS = 400  # Buffer 400ms before starting playback
-        PREBUFFER_BYTES = int(8000 * 2 * PREBUFFER_MS / 1000)  # 6400 bytes
+        PREBUFFER_MS = 300
+        PREBUFFER_BYTES = int(detected_rate * 2 * PREBUFFER_MS / 1000)
 
         pcm_buffer = bytearray()
-        raw_24k_buffer = bytearray()  # Accumulate 24kHz before resampling
-        RAW_FLUSH_SIZE = 9600  # ~200ms of 24kHz audio (24000*2*0.2)
+        raw_24k_buffer = bytearray()
+        RAW_FLUSH_SIZE = 9600  # ~200ms of 24kHz audio
         playback_started = False
         should_end = False
 
@@ -187,16 +212,16 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                         raw_24k_buffer.extend(pcm_24k)
                         # Batch resample when enough accumulated
                         if len(raw_24k_buffer) >= RAW_FLUSH_SIZE:
-                            pcm_8k = resample(bytes(raw_24k_buffer), 24000, 8000)
-                            pcm_buffer.extend(pcm_8k)
+                            pcm_out = resample(bytes(raw_24k_buffer), 24000, detected_rate)
+                            pcm_buffer.extend(pcm_out)
                             raw_24k_buffer.clear()
                     if chunk.end_call:
                         logger.info("Agent end phrase for %s", call_sid)
                         should_end = True
                 # Flush remaining 24k buffer
                 if raw_24k_buffer:
-                    pcm_8k = resample(bytes(raw_24k_buffer), 24000, 8000)
-                    pcm_buffer.extend(pcm_8k)
+                    pcm_out = resample(bytes(raw_24k_buffer), 24000, detected_rate)
+                    pcm_buffer.extend(pcm_out)
                     raw_24k_buffer.clear()
             except Exception as e:
                 logger.error("receive_audio error [%s]: %s", call_sid, e)
