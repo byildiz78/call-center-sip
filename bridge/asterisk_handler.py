@@ -168,12 +168,12 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
         """Read audio from Gemini, buffer, resample 24kHz → 8kHz, pace at 20ms."""
         FRAME_SIZE = 320  # 20ms @ 8kHz 16-bit mono
         FRAME_DURATION = 0.02  # 20ms
-        PREBUFFER_MS = 300  # Buffer 300ms before starting playback
-        PREBUFFER_BYTES = int(8000 * 2 * PREBUFFER_MS / 1000)  # 4800 bytes
+        PREBUFFER_MS = 400  # Buffer 400ms before starting playback
+        PREBUFFER_BYTES = int(8000 * 2 * PREBUFFER_MS / 1000)  # 6400 bytes
 
         pcm_buffer = bytearray()
         raw_24k_buffer = bytearray()  # Accumulate 24kHz before resampling
-        RAW_FLUSH_SIZE = 4800  # ~100ms of 24kHz audio (24000*2*0.1)
+        RAW_FLUSH_SIZE = 9600  # ~200ms of 24kHz audio (24000*2*0.2)
         playback_started = False
         should_end = False
 
