@@ -193,9 +193,28 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
             call_ended.set()
 
     async def gemini_to_asterisk():
-        """Read audio from Gemini, resample 24kHz → 8kHz, send as 320-byte frames."""
+        """Read audio from Gemini, resample 24kHz → 8kHz, pace at 20ms intervals."""
         # Asterisk expects 320-byte frames (20ms @ 8kHz 16-bit mono)
         FRAME_SIZE = 320
+        FRAME_DURATION = 0.02  # 20ms per frame
+        playback_queue = asyncio.Queue()
+
+        async def frame_sender():
+            """Send frames at a steady 20ms pace."""
+            try:
+                while not call_ended.is_set():
+                    frame_data = await asyncio.wait_for(playback_queue.get(), timeout=1.0)
+                    frame = make_frame(TYPE_AUDIO, frame_data)
+                    writer.write(frame)
+                    await writer.drain()
+                    await asyncio.sleep(FRAME_DURATION)
+            except asyncio.TimeoutError:
+                pass
+            except (ConnectionResetError, BrokenPipeError):
+                pass
+
+        sender_task = asyncio.create_task(frame_sender())
+
         try:
             async for chunk in gemini.receive():
                 if call_ended.is_set():
@@ -204,21 +223,21 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                     pcm_24k = base64.b64decode(chunk.audio_b64)
                     recorder.write_agent(pcm_24k)
                     pcm_8k = resample(pcm_24k, 24000, 8000)
-                    # Send in 320-byte chunks (20ms each)
+                    # Queue 320-byte frames for paced sending
                     offset = 0
                     while offset < len(pcm_8k):
                         end = min(offset + FRAME_SIZE, len(pcm_8k))
                         frame_data = pcm_8k[offset:end]
-                        # Pad last chunk if needed
                         if len(frame_data) < FRAME_SIZE:
                             frame_data = frame_data + b'\x00' * (FRAME_SIZE - len(frame_data))
-                        frame = make_frame(TYPE_AUDIO, frame_data)
-                        writer.write(frame)
+                        await playback_queue.put(frame_data)
                         offset += FRAME_SIZE
-                    await writer.drain()
                 if chunk.end_call:
                     logger.info("Agent end phrase for %s", call_sid)
-                    await asyncio.sleep(1)
+                    # Wait for queue to drain before ending
+                    while not playback_queue.empty():
+                        await asyncio.sleep(0.02)
+                    await asyncio.sleep(0.5)
                     call_ended.set()
                     break
         except (ConnectionResetError, BrokenPipeError):
@@ -226,6 +245,7 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
         except Exception as e:
             logger.error("gemini_to_asterisk error [%s]: %s", call_sid, e)
         finally:
+            sender_task.cancel()
             call_ended.set()
 
     async def timeout_watcher():
