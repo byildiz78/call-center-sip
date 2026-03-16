@@ -150,13 +150,12 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     call_ended = asyncio.Event()
 
     audio_frame_count = 0
-    # Asterisk sends slin16 (16kHz) when CHANNEL(readformat)=slin16
-    # 20ms @ 16kHz 16-bit = 640 bytes per frame
-    # Buffer ~100ms = 5 frames = 3200 bytes
-    BUFFER_SIZE = 3200
+    # Asterisk AudioSocket sends slin 8kHz: 320 bytes per 20ms frame
+    # Buffer ~100ms = 5 frames = 1600 bytes
+    BUFFER_SIZE = 1600
 
     async def asterisk_to_gemini():
-        """Read 16kHz audio from Asterisk, send directly to Gemini (no resample)."""
+        """Read 8kHz audio from Asterisk, resample to 16kHz, send to Gemini."""
         nonlocal audio_frame_count
         audio_buffer = bytearray()
         try:
@@ -171,8 +170,9 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                         chunk = bytes(audio_buffer)
                         audio_buffer.clear()
                         recorder.write_caller(chunk)
-                        # Already 16kHz - send directly to Gemini
-                        b64 = base64.b64encode(chunk).decode("ascii")
+                        # Resample 8kHz → 16kHz for Gemini (soxr HQ)
+                        pcm_16k = resample(chunk, 8000, 16000)
+                        b64 = base64.b64encode(pcm_16k).decode("ascii")
                         await gemini.send_audio(b64)
                 elif frame_type == TYPE_ERROR:
                     logger.info("Error frame received for %s", call_sid)
@@ -182,7 +182,8 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
             if audio_buffer:
                 chunk = bytes(audio_buffer)
                 recorder.write_caller(chunk)
-                b64 = base64.b64encode(chunk).decode("ascii")
+                pcm_16k = resample(chunk, 8000, 16000)
+                b64 = base64.b64encode(pcm_16k).decode("ascii")
                 await gemini.send_audio(b64)
         except (asyncio.IncompleteReadError, ConnectionResetError):
             logger.info("Asterisk disconnected for %s", call_sid)
@@ -192,7 +193,7 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
             call_ended.set()
 
     async def gemini_to_asterisk():
-        """Read audio from Gemini, resample 24kHz → 16kHz, send to Asterisk."""
+        """Read audio from Gemini, resample 24kHz → 8kHz, send to Asterisk."""
         try:
             async for chunk in gemini.receive():
                 if call_ended.is_set():
@@ -200,9 +201,9 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                 if chunk.audio_b64:
                     pcm_24k = base64.b64decode(chunk.audio_b64)
                     recorder.write_agent(pcm_24k)
-                    # Resample 24kHz → 16kHz for Asterisk slin16
-                    pcm_16k = resample(pcm_24k, 24000, 16000)
-                    frame = make_frame(TYPE_AUDIO, pcm_16k)
+                    # Resample 24kHz → 8kHz for Asterisk slin (soxr HQ)
+                    pcm_8k = resample(pcm_24k, 24000, 8000)
+                    frame = make_frame(TYPE_AUDIO, pcm_8k)
                     writer.write(frame)
                     await writer.drain()
                 if chunk.end_call:
