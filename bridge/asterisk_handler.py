@@ -123,8 +123,8 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
 
     audio_frame_count = 0
     # Asterisk AudioSocket sends slin 8kHz: 320 bytes per 20ms frame
-    # Buffer ~100ms = 5 frames = 1600 bytes
-    BUFFER_SIZE = 1600
+    # Buffer ~400ms = 20 frames = 6400 bytes (larger = better soxr quality)
+    BUFFER_SIZE = 6400
 
     async def asterisk_to_gemini():
         """Read 8kHz audio from Asterisk, resample to 16kHz with soxr, send to Gemini."""
