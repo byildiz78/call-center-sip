@@ -193,7 +193,9 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
             call_ended.set()
 
     async def gemini_to_asterisk():
-        """Read audio from Gemini, resample 24kHz → 8kHz, send to Asterisk."""
+        """Read audio from Gemini, resample 24kHz → 8kHz, send as 320-byte frames."""
+        # Asterisk expects 320-byte frames (20ms @ 8kHz 16-bit mono)
+        FRAME_SIZE = 320
         try:
             async for chunk in gemini.receive():
                 if call_ended.is_set():
@@ -201,10 +203,18 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                 if chunk.audio_b64:
                     pcm_24k = base64.b64decode(chunk.audio_b64)
                     recorder.write_agent(pcm_24k)
-                    # Resample 24kHz → 8kHz for Asterisk slin (soxr HQ)
                     pcm_8k = resample(pcm_24k, 24000, 8000)
-                    frame = make_frame(TYPE_AUDIO, pcm_8k)
-                    writer.write(frame)
+                    # Send in 320-byte chunks (20ms each)
+                    offset = 0
+                    while offset < len(pcm_8k):
+                        end = min(offset + FRAME_SIZE, len(pcm_8k))
+                        frame_data = pcm_8k[offset:end]
+                        # Pad last chunk if needed
+                        if len(frame_data) < FRAME_SIZE:
+                            frame_data = frame_data + b'\x00' * (FRAME_SIZE - len(frame_data))
+                        frame = make_frame(TYPE_AUDIO, frame_data)
+                        writer.write(frame)
+                        offset += FRAME_SIZE
                     await writer.drain()
                 if chunk.end_call:
                     logger.info("Agent end phrase for %s", call_sid)
