@@ -32,8 +32,9 @@ class AudioChunk:
 class GeminiSession:
     """Manages a single Gemini Live API WebSocket session."""
 
-    def __init__(self, call_sid: str):
+    def __init__(self, call_sid: str, input_sample_rate: int = 16000):
         self.call_sid = call_sid
+        self.input_sample_rate = input_sample_rate
         self.ws = None
         self.transcript: list[dict] = []
         self._connected = False
@@ -93,8 +94,10 @@ class GeminiSession:
         # Trigger greeting: send silence then signal end-of-turn
         # so Gemini starts speaking immediately without waiting for user
         import base64
-        silence = base64.b64encode(b"\x00" * 16000).decode("ascii")  # 500ms silence
-        await self.send_audio(silence)
+        # 500ms silence at the session's input sample rate
+        silence_bytes = self.input_sample_rate  # 500ms = rate * 2 bytes / 2
+        silence = base64.b64encode(b"\x00" * silence_bytes).decode("ascii")
+        await self.send_audio(silence, sample_rate=self.input_sample_rate)
 
         # Signal that the client's turn is complete → Gemini should respond
         turn_msg = {
