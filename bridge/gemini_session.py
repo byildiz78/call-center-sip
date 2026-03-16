@@ -91,11 +91,19 @@ class GeminiSession:
                      self.call_sid, str(setup_data)[:150])
         self._connected = True
 
-        # Trigger greeting by sending silence so Gemini starts speaking
+        # Trigger greeting: send silence then end-of-turn
         import base64
         silence_bytes = self.input_sample_rate  # ~500ms silence
         silence = base64.b64encode(b"\x00" * silence_bytes).decode("ascii")
         await self.send_audio(silence, sample_rate=self.input_sample_rate)
+
+        # Signal turn complete so Gemini responds with greeting
+        turn_msg = {
+            "clientContent": {
+                "turnComplete": True,
+            }
+        }
+        await self.ws.send(json.dumps(turn_msg))
 
     async def send_audio(self, pcm_b64: str, sample_rate: int = 16000):
         """Send a base64-encoded PCM audio chunk to Gemini."""
