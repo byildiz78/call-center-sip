@@ -125,7 +125,7 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     # Gemini works best with 16kHz - upsample if needed
     gemini_rate = 16000 if detected_rate == 8000 else detected_rate
 
-    recorder = CallRecorder(call_sid, caller_rate=detected_rate)
+    recorder = CallRecorder(call_sid, caller_rate=gemini_rate)
     gemini = GeminiSession(call_sid, input_sample_rate=gemini_rate)
 
     await db.create_call(call_sid, caller_number)
@@ -141,8 +141,8 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
 
     # Process first audio frame
     if first_audio:
-        recorder.write_caller(first_audio)
         gemini_audio = resample(first_audio, detected_rate, gemini_rate) if detected_rate != gemini_rate else first_audio
+        recorder.write_caller(gemini_audio)
         b64 = base64.b64encode(gemini_audio).decode("ascii")
         await gemini.send_audio(b64, sample_rate=gemini_rate)
 
@@ -167,8 +167,8 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                     if len(audio_buffer) >= BUFFER_SIZE:
                         chunk = bytes(audio_buffer)
                         audio_buffer.clear()
-                        recorder.write_caller(chunk)
                         gemini_chunk = resample(chunk, detected_rate, gemini_rate) if detected_rate != gemini_rate else chunk
+                        recorder.write_caller(gemini_chunk)
                         b64 = base64.b64encode(gemini_chunk).decode("ascii")
                         await gemini.send_audio(b64, sample_rate=gemini_rate)
                 elif frame_type == TYPE_ERROR:
@@ -178,8 +178,8 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                     pass
             if audio_buffer:
                 chunk = bytes(audio_buffer)
-                recorder.write_caller(chunk)
                 gemini_chunk = resample(chunk, detected_rate, gemini_rate) if detected_rate != gemini_rate else chunk
+                recorder.write_caller(gemini_chunk)
                 b64 = base64.b64encode(gemini_chunk).decode("ascii")
                 await gemini.send_audio(b64, sample_rate=gemini_rate)
         except (asyncio.IncompleteReadError, ConnectionResetError):
