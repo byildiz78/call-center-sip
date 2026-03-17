@@ -94,6 +94,20 @@
             </div>
         </div>
 
+        <!-- Hourly Chart -->
+        <div class="section-header">Saatlik Arama Yogunlugu</div>
+        <div class="card chart-card">
+            <div class="chart-controls">
+                <input type="date" id="chartDateFrom" />
+                <span class="filter-sep">-</span>
+                <input type="date" id="chartDateTo" />
+                <button class="btn btn-primary" onclick="loadHourlyChart()">Goster</button>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="hourlyChart"></canvas>
+            </div>
+        </div>
+
         <!-- Recent calls mini table -->
         <div class="section-header">Son Aramalar</div>
         <div class="card">

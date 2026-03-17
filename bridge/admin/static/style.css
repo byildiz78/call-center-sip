@@ -55,6 +55,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .s-negative .s-count{color:#f87171}
 .s-negative .s-fill{background:#f87171}
 
+/* ===== Hourly Chart ===== */
+.chart-card{position:relative}
+.chart-controls{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.chart-wrapper{position:relative;width:100%;height:260px}
+.chart-wrapper canvas{width:100%;height:100%;display:block}
+
 /* ===== Cards ===== */
 .card{background:#111827;border:1px solid #1e293b;border-radius:14px;padding:20px;margin-bottom:20px}
 .card h3{font-size:16px;font-weight:600;color:#38bdf8;margin-bottom:16px}

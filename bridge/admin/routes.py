@@ -44,6 +44,19 @@ async def api_get_stats():
     return stats
 
 
+@router.get("/stats/hourly")
+async def api_hourly_stats(
+    date_from: str = Query("", description="YYYY-MM-DD"),
+    date_to: str = Query("", description="YYYY-MM-DD"),
+):
+    from datetime import datetime, timezone, timedelta
+    tz = timezone(timedelta(hours=3))
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+    df = date_from or today
+    dt = date_to or today
+    return await db.get_hourly_stats(df, dt)
+
+
 @router.get("/active")
 async def api_get_active_calls():
     import time

@@ -225,6 +225,27 @@ async def get_stats() -> dict:
     }
 
 
+async def get_hourly_stats(date_from: str, date_to: str) -> list:
+    """Return hourly call counts between two dates (inclusive)."""
+    async with aiosqlite.connect(DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        rows = await (
+            await conn.execute(
+                """SELECT strftime('%H', start_time) as hour, COUNT(*) as count
+                   FROM calls
+                   WHERE DATE(start_time) >= ? AND DATE(start_time) <= ?
+                   GROUP BY strftime('%H', start_time)
+                   ORDER BY hour""",
+                (date_from, date_to),
+            )
+        ).fetchall()
+        # Build full 24-hour array
+        hourly = {str(i).zfill(2): 0 for i in range(24)}
+        for r in rows:
+            hourly[r["hour"]] = r["count"]
+        return [{"hour": h, "count": c} for h, c in sorted(hourly.items())]
+
+
 def _row_to_dict(row) -> dict:
     d = dict(row)
     if "transcript" in d and isinstance(d["transcript"], str):

@@ -14,7 +14,7 @@ function navigate(page) {
     document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById('page-' + page).classList.add('active');
-    if (page === 'dashboard') { loadStats(); loadRecentCalls(); }
+    if (page === 'dashboard') { loadStats(); loadRecentCalls(); loadHourlyChart(); }
     if (page === 'calls') loadCalls();
     if (page === 'settings') loadPrompt();
     if (page === 'users') loadUsers();
@@ -91,6 +91,124 @@ async function loadRecentCalls() {
         `).join('');
     } catch (e) { console.error('Recent calls error:', e); }
 }
+
+// ===== HOURLY CHART =====
+async function loadHourlyChart() {
+    const df = document.getElementById('chartDateFrom').value;
+    const dt = document.getElementById('chartDateTo').value;
+    try {
+        const res = await apiFetch(`/api/stats/hourly?date_from=${df}&date_to=${dt}`);
+        if (!res) return;
+        const data = await res.json();
+        drawHourlyChart(data);
+    } catch (e) { console.error('Hourly chart error:', e); }
+}
+
+function drawHourlyChart(data) {
+    const canvas = document.getElementById('hourlyChart');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const W = rect.width, H = rect.height;
+
+    ctx.clearRect(0, 0, W, H);
+
+    const padL = 44, padR = 16, padT = 16, padB = 36;
+    const chartW = W - padL - padR;
+    const chartH = H - padT - padB;
+
+    const counts = data.map(d => d.count);
+    const maxVal = Math.max(...counts, 1);
+    // Nice Y scale
+    const step = maxVal <= 5 ? 1 : maxVal <= 20 ? 5 : Math.ceil(maxVal / 5 / 5) * 5;
+    const yMax = Math.ceil(maxVal / step) * step || step;
+
+    // Grid lines
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    const gridLines = Math.min(6, yMax / step);
+    for (let i = 0; i <= gridLines; i++) {
+        const val = Math.round(i * step);
+        if (val > yMax) break;
+        const y = padT + chartH - (val / yMax) * chartH;
+        ctx.beginPath();
+        ctx.moveTo(padL, y);
+        ctx.lineTo(W - padR, y);
+        ctx.stroke();
+        ctx.fillText(val.toString(), padL - 8, y);
+    }
+
+    // Bars
+    const barGap = 4;
+    const barW = (chartW - barGap * 24) / 24;
+    const gradient = ctx.createLinearGradient(0, padT, 0, padT + chartH);
+    gradient.addColorStop(0, '#38bdf8');
+    gradient.addColorStop(1, '#2563eb');
+
+    // Hour labels
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#64748b';
+    ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+
+    for (let i = 0; i < 24; i++) {
+        const x = padL + i * (barW + barGap) + barGap / 2;
+        const val = counts[i] || 0;
+        const barH = (val / yMax) * chartH;
+
+        // Bar
+        const radius = Math.min(4, barW / 2);
+        const bx = x, by = padT + chartH - barH, bw = barW, bh = barH;
+        ctx.fillStyle = gradient;
+        if (bh > 0) {
+            ctx.beginPath();
+            ctx.moveTo(bx + radius, by);
+            ctx.lineTo(bx + bw - radius, by);
+            ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + radius);
+            ctx.lineTo(bx + bw, by + bh);
+            ctx.lineTo(bx, by + bh);
+            ctx.lineTo(bx, by + radius);
+            ctx.quadraticCurveTo(bx, by, bx + radius, by);
+            ctx.fill();
+        }
+
+        // Value on top of bar
+        if (val > 0) {
+            ctx.fillStyle = '#e2e8f0';
+            ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(val.toString(), x + barW / 2, by - 2);
+        }
+
+        // Hour label
+        ctx.fillStyle = '#64748b';
+        ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillText(data[i].hour, x + barW / 2, padT + chartH + 8);
+    }
+}
+
+// Redraw chart on resize
+let _chartData = null;
+const _origLoadHourlyChart = loadHourlyChart;
+loadHourlyChart = async function() {
+    const df = document.getElementById('chartDateFrom').value;
+    const dt = document.getElementById('chartDateTo').value;
+    try {
+        const res = await apiFetch(`/api/stats/hourly?date_from=${df}&date_to=${dt}`);
+        if (!res) return;
+        _chartData = await res.json();
+        drawHourlyChart(_chartData);
+    } catch (e) { console.error('Hourly chart error:', e); }
+};
+window.addEventListener('resize', () => { if (_chartData) drawHourlyChart(_chartData); });
 
 // ===== CALLS PAGE =====
 let currentPage = 1;
@@ -412,6 +530,10 @@ document.getElementById('filterDateFrom').value = t;
 document.getElementById('filterDateTo').value = t;
 document.getElementById('dashDate').textContent = new Date().toLocaleDateString('tr-TR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
+document.getElementById('chartDateFrom').value = t;
+document.getElementById('chartDateTo').value = t;
+
 loadStats();
 loadRecentCalls();
+loadHourlyChart();
 setInterval(() => { loadStats(); loadRecentCalls(); }, 10000);

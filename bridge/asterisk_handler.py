@@ -106,24 +106,21 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     caller_number = await get_caller_number()
     logger.info("Caller number: %s", caller_number)
 
-    # Detect sample rate from first audio frame
-    # 8kHz slin = 320 bytes/20ms, 16kHz slin16 = 640 bytes/20ms
-    detected_rate = 8000  # default
-
-    # Read first audio frame to detect rate
+    # AudioSocket from Asterisk always sends slin at 8kHz (ulaw transcoded)
+    detected_rate = 8000
     first_audio = None
+
+    # Try to grab first audio frame quickly (non-blocking, 200ms timeout)
     try:
-        while True:
-            frame_type, payload = await asyncio.wait_for(read_frame(reader), timeout=5)
-            if frame_type == TYPE_AUDIO and payload:
-                first_audio = payload
-                if len(payload) >= 640:
-                    detected_rate = 16000
-                break
-    except Exception:
+        frame_type, payload = await asyncio.wait_for(read_frame(reader), timeout=0.2)
+        if frame_type == TYPE_AUDIO and payload:
+            first_audio = payload
+            if len(payload) >= 640:
+                detected_rate = 16000
+    except (asyncio.TimeoutError, Exception):
         pass
 
-    logger.info("Detected sample rate: %dHz (frame=%d bytes)", detected_rate, len(first_audio) if first_audio else 0)
+    logger.info("Sample rate: %dHz (first_frame=%d bytes)", detected_rate, len(first_audio) if first_audio else 0)
 
     recorder = CallRecorder(call_sid, caller_rate=detected_rate)
     gemini = GeminiSession(call_sid, input_sample_rate=detected_rate)
