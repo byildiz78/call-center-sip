@@ -154,3 +154,11 @@ async def api_get_call(call_sid: str):
     if not call:
         return JSONResponse({"error": "Call not found"}, status_code=404)
     return call
+
+
+@router.get("/calls/{call_sid}/debug")
+async def api_get_call_debug(call_sid: str):
+    debug_data = await db.get_audio_debug(call_sid)
+    if debug_data is None:
+        return JSONResponse({"error": "Call not found"}, status_code=404)
+    return debug_data

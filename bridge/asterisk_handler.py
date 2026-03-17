@@ -25,6 +25,7 @@ import uuid
 from bridge.gemini_session import GeminiSession
 from bridge.recorder import CallRecorder
 from bridge.audio_utils import resample
+from bridge.audio_debug import AudioDebugLogger
 from bridge.config import get_settings, PUBLIC_URL, BRIDGE_PORT
 from bridge import db
 
@@ -125,6 +126,7 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     # Gemini works best with 16kHz - upsample if needed
     gemini_rate = 16000 if detected_rate == 8000 else detected_rate
 
+    debug_log = AudioDebugLogger(call_sid)
     recorder = CallRecorder(call_sid, caller_rate=gemini_rate)
     gemini = GeminiSession(call_sid, input_sample_rate=gemini_rate)
 
@@ -141,9 +143,13 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
 
     # Process first audio frame
     if first_audio:
+        debug_log.log_audiosocket_frame(first_audio)
+        debug_log.log_pre_resample(first_audio)
         gemini_audio = resample(first_audio, detected_rate, gemini_rate) if detected_rate != gemini_rate else first_audio
+        debug_log.log_post_resample(gemini_audio)
         recorder.write_caller(gemini_audio)
         b64 = base64.b64encode(gemini_audio).decode("ascii")
+        debug_log.log_gemini_send(len(gemini_audio))
         await gemini.send_audio(b64, sample_rate=gemini_rate)
 
     call_ended = asyncio.Event()
@@ -161,15 +167,19 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                 frame_type, payload = await read_frame(reader)
                 if frame_type == TYPE_AUDIO and payload:
                     audio_frame_count += 1
+                    debug_log.log_audiosocket_frame(payload)
                     if audio_frame_count == 2:
                         logger.info("Audio streaming: %d bytes/frame @ %dHz (call %s)", len(payload), detected_rate, call_sid)
                     audio_buffer.extend(payload)
                     if len(audio_buffer) >= BUFFER_SIZE:
                         chunk = bytes(audio_buffer)
                         audio_buffer.clear()
+                        debug_log.log_pre_resample(chunk)
                         gemini_chunk = resample(chunk, detected_rate, gemini_rate) if detected_rate != gemini_rate else chunk
+                        debug_log.log_post_resample(gemini_chunk)
                         recorder.write_caller(gemini_chunk)
                         b64 = base64.b64encode(gemini_chunk).decode("ascii")
+                        debug_log.log_gemini_send(len(gemini_chunk))
                         await gemini.send_audio(b64, sample_rate=gemini_rate)
                 elif frame_type == TYPE_ERROR:
                     logger.info("Error frame received for %s", call_sid)
@@ -178,9 +188,12 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                     pass
             if audio_buffer:
                 chunk = bytes(audio_buffer)
+                debug_log.log_pre_resample(chunk)
                 gemini_chunk = resample(chunk, detected_rate, gemini_rate) if detected_rate != gemini_rate else chunk
+                debug_log.log_post_resample(gemini_chunk)
                 recorder.write_caller(gemini_chunk)
                 b64 = base64.b64encode(gemini_chunk).decode("ascii")
+                debug_log.log_gemini_send(len(gemini_chunk))
                 await gemini.send_audio(b64, sample_rate=gemini_rate)
         except (asyncio.IncompleteReadError, ConnectionResetError):
             logger.info("Asterisk disconnected for %s", call_sid)
@@ -211,11 +224,13 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                         break
                     if chunk.audio_b64:
                         pcm_24k = base64.b64decode(chunk.audio_b64)
+                        debug_log.log_gemini_receive(pcm_24k)
                         recorder.write_agent(pcm_24k)
                         raw_24k_buffer.extend(pcm_24k)
                         # Batch resample when enough accumulated
                         if len(raw_24k_buffer) >= RAW_FLUSH_SIZE:
                             pcm_out = resample(bytes(raw_24k_buffer), 24000, detected_rate)
+                            debug_log.log_playback_resample(pcm_out, detected_rate)
                             pcm_buffer.extend(pcm_out)
                             raw_24k_buffer.clear()
                     if chunk.end_call:
@@ -224,6 +239,7 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
                 # Flush remaining 24k buffer
                 if raw_24k_buffer:
                     pcm_out = resample(bytes(raw_24k_buffer), 24000, detected_rate)
+                    debug_log.log_playback_resample(pcm_out, detected_rate)
                     pcm_buffer.extend(pcm_out)
                     raw_24k_buffer.clear()
             except Exception as e:
@@ -303,8 +319,9 @@ async def handle_audiosocket(reader: asyncio.StreamReader, writer: asyncio.Strea
     sentiment = gemini.get_sentiment()
     caller_info = gemini.get_caller_info()
 
-    await db.end_call(call_sid, duration, transcript, summary, recording_path, sentiment)
-    logger.info("SIP call ended: %s | %ds | %s", call_sid, duration, sentiment)
+    audio_debug = debug_log.finalize()
+    await db.end_call(call_sid, duration, transcript, summary, recording_path, sentiment, audio_debug)
+    logger.info("SIP call ended: %s | %ds | %s | issues: %s", call_sid, duration, sentiment, audio_debug.get("summary", {}).get("issues", []))
 
     from bridge.ticket import send_webhook
     base_url = PUBLIC_URL or f"http://localhost:{BRIDGE_PORT}"

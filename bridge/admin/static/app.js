@@ -290,7 +290,10 @@ async function showDetail(callSid) {
             ${c.summary ? `<div class="section-title">Sorun Ozeti</div><p style="font-size:13px;line-height:1.7;margin-bottom:12px;color:#cbd5e1">${esc(c.summary)}</p>` : ''}
             ${c.recording_path ? `<div class="section-title">Ses Kaydi</div><audio controls src="/api/recordings/${c.call_sid}"></audio>` : ''}
             <div class="section-title">Konusma Metni</div>
-            <div class="transcript-list">${tHtml}</div>`;
+            <div class="transcript-list">${tHtml}</div>
+            <div class="section-title">Ses Debug Bilgisi</div>
+            <button class="btn btn-sm btn-outline" id="loadDebugBtn" onclick="loadAudioDebug('${c.call_sid}')">Debug Verisi Yukle</button>
+            <div id="audioDebugContent" class="audio-debug-container" style="display:none"></div>`;
         document.getElementById('modalOverlay').classList.add('open');
     } catch (e) { console.error('Detail error:', e); }
 }
@@ -298,6 +301,96 @@ async function showDetail(callSid) {
 function closeModal(event) {
     if (!event || event.target === document.getElementById('modalOverlay'))
         document.getElementById('modalOverlay').classList.remove('open');
+}
+
+// ===== AUDIO DEBUG =====
+async function loadAudioDebug(callSid) {
+    const btn = document.getElementById('loadDebugBtn');
+    const container = document.getElementById('audioDebugContent');
+    btn.textContent = 'Yukleniyor...';
+    btn.disabled = true;
+    try {
+        const res = await apiFetch(`/api/calls/${callSid}/debug`);
+        if (!res) return;
+        const debug = await res.json();
+        if (!debug || !debug.summary) {
+            container.innerHTML = '<div class="no-data">Debug verisi yok</div>';
+        } else {
+            container.innerHTML = renderAudioDebug(debug);
+        }
+        container.style.display = 'block';
+        btn.style.display = 'none';
+    } catch (e) {
+        container.innerHTML = '<div class="no-data">Yukleme hatasi</div>';
+        container.style.display = 'block';
+    }
+}
+
+function rmsClass(db) {
+    if (db < -40) return 'bad';
+    if (db < -30) return 'warn';
+    return 'good';
+}
+
+function renderAudioDebug(d) {
+    let html = '';
+    const s = d.summary || {};
+    const c = d.counters || {};
+
+    // Issues banner
+    if (s.issues && s.issues.length) {
+        html += '<div class="debug-issues">';
+        s.issues.forEach(function(i) { html += '<div class="debug-issue-item">' + esc(i) + '</div>'; });
+        html += '</div>';
+    }
+
+    // Summary metrics
+    html += '<div class="debug-summary-grid">';
+    html += debugMetric('Arayan RMS', (s.avg_caller_rms_db || 0).toFixed(1) + ' dB', rmsClass(s.avg_caller_rms_db || 0));
+    html += debugMetric('Agent RMS', (s.avg_agent_rms_db || 0).toFixed(1) + ' dB', rmsClass(s.avg_agent_rms_db || 0));
+    html += debugMetric('Resample Fark', (s.resample_gain_db || 0).toFixed(1) + ' dB', Math.abs(s.resample_gain_db || 0) > 3 ? 'bad' : 'good');
+    html += debugMetric('Ilk Yanit', (s.gemini_first_response_latency_ms || 0) + ' ms', (s.gemini_first_response_latency_ms || 0) > 3000 ? 'bad' : 'good');
+    html += '</div>';
+
+    // Second row metrics
+    html += '<div class="debug-summary-grid">';
+    html += debugMetric('Arayan Min RMS', (s.min_caller_rms_db || 0).toFixed(1) + ' dB', rmsClass(s.min_caller_rms_db || 0));
+    html += debugMetric('Arayan Max RMS', (s.max_caller_rms_db || 0).toFixed(1) + ' dB', rmsClass(s.max_caller_rms_db || 0));
+    html += debugMetric('Sessizlik Orani', ((s.caller_silence_ratio || 0) * 100).toFixed(0) + '%', (s.caller_silence_ratio || 0) > 0.7 ? 'bad' : 'good');
+    html += debugMetric('AS Frame', c.as_frame_count || 0, '');
+    html += '</div>';
+
+    // Stage snapshots
+    var stages = [
+        ['pre_resample', 'Asterisk Ham Ses (8kHz)'],
+        ['post_resample', 'Resample Sonrasi (16kHz → Gemini)'],
+        ['gemini_receive', 'Gemini Yanit Sesi (24kHz)'],
+        ['playback_resample', 'Playback Resample (→ 8kHz)']
+    ];
+    var snaps = d.snapshots || {};
+    stages.forEach(function(st) {
+        var key = st[0], label = st[1];
+        var data = snaps[key];
+        if (data && data.length) {
+            html += '<details class="debug-stage"><summary>' + label + ' (' + data.length + ' snapshot)</summary>';
+            html += '<table class="debug-stage-table"><thead><tr><th>t(s)</th><th>RMS(dB)</th><th>Peak(dB)</th><th>Peak Amp</th><th>ZCR</th><th>Samples</th><th>Sessiz</th></tr></thead><tbody>';
+            data.forEach(function(row) {
+                var cls = row.silence ? 'style="color:#f87171"' : '';
+                html += '<tr ' + cls + '><td>' + row.t + '</td><td>' + row.rms_db + '</td><td>' + row.peak_db + '</td><td>' + row.peak_amplitude + '</td><td>' + row.zcr + '</td><td>' + row.samples + '</td><td>' + (row.silence ? 'EVET' : '-') + '</td></tr>';
+            });
+            html += '</tbody></table></details>';
+        }
+    });
+
+    // Raw JSON
+    html += '<details class="debug-raw"><summary>Raw JSON Goster</summary>';
+    html += '<pre class="debug-json">' + esc(JSON.stringify(d, null, 2)) + '</pre>';
+    html += '</details>';
+    return html;
+}
+
+function debugMetric(label, value, cls) {
+    return '<div class="debug-metric"><div class="debug-metric-label">' + label + '</div><div class="debug-metric-value ' + (cls || '') + '">' + value + '</div></div>';
 }
 
 // ===== SETTINGS =====

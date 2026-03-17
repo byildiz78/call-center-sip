@@ -166,6 +166,28 @@ audio{width:100%;margin-top:8px;border-radius:8px}
 .logout-link{display:block;margin-top:10px;font-size:12px;color:#64748b;cursor:pointer;text-decoration:none;transition:color .15s}
 .logout-link:hover{color:#f87171}
 
+/* ===== Audio Debug ===== */
+.audio-debug-container{margin-top:12px}
+.debug-issues{background:#451a1a;border:1px solid #7f1d1d;border-radius:8px;padding:12px;margin-bottom:12px}
+.debug-issue-item{color:#fca5a5;font-size:13px;padding:4px 0}
+.debug-issue-item::before{content:"⚠ ";font-weight:bold;color:#f87171}
+.debug-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.debug-metric{background:#1e293b;border-radius:8px;padding:12px;text-align:center}
+.debug-metric-label{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+.debug-metric-value{font-size:16px;font-weight:700;color:#f1f5f9;margin-top:4px}
+.debug-metric-value.warn{color:#fbbf24}
+.debug-metric-value.bad{color:#f87171}
+.debug-metric-value.good{color:#4ade80}
+.debug-raw{margin-top:8px}
+.debug-raw summary{cursor:pointer;color:#64748b;font-size:12px;padding:6px 0}
+.debug-raw summary:hover{color:#e2e8f0}
+.debug-json{background:#0f1629;border:1px solid #1e293b;border-radius:6px;padding:12px;font-size:11px;color:#94a3b8;overflow-x:auto;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;margin-top:8px}
+.debug-stage{margin-bottom:8px}
+.debug-stage summary{cursor:pointer;color:#94a3b8;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;padding:6px 0}
+.debug-stage-table{width:100%;font-size:11px;margin-top:4px}
+.debug-stage-table th{font-size:10px;padding:4px 8px;color:#475569}
+.debug-stage-table td{padding:4px 8px;border-bottom:1px solid #1e293b30}
+
 /* ===== Responsive ===== */
 @media(max-width:1024px){.widget-grid{grid-template-columns:repeat(2,1fr)}.settings-grid{grid-template-columns:1fr}}
 @media(max-width:768px){.sidebar{width:64px}.sidebar .brand-text,.sidebar .nav-item span{display:none}.main-content{margin-left:64px;padding:16px}.widget-grid,.sentiment-grid{grid-template-columns:1fr}}

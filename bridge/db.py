@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS calls (
 """
 
 _ADD_SENTIMENT = "ALTER TABLE calls ADD COLUMN sentiment TEXT DEFAULT 'notr'"
+_ADD_AUDIO_DEBUG = "ALTER TABLE calls ADD COLUMN audio_debug TEXT DEFAULT '{}'"
 
 
 def _now() -> str:
@@ -42,6 +43,11 @@ async def init_db():
         # Migration: add sentiment column if missing
         try:
             await db.execute(_ADD_SENTIMENT)
+        except Exception:
+            pass
+        # Migration: add audio_debug column if missing
+        try:
+            await db.execute(_ADD_AUDIO_DEBUG)
         except Exception:
             pass
         await db.commit()
@@ -65,16 +71,20 @@ async def end_call(
     summary: str,
     recording_path: str,
     sentiment: str = "notr",
+    audio_debug: dict | None = None,
 ):
     now = _now()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """UPDATE calls SET
                 end_time = ?, duration_seconds = ?, status = 'completed',
-                transcript = ?, summary = ?, recording_path = ?, sentiment = ?
+                transcript = ?, summary = ?, recording_path = ?, sentiment = ?,
+                audio_debug = ?
             WHERE call_sid = ?""",
             (now, duration, json.dumps(transcript, ensure_ascii=False),
-             summary, recording_path, sentiment, call_sid),
+             summary, recording_path, sentiment,
+             json.dumps(audio_debug or {}, ensure_ascii=False),
+             call_sid),
         )
         await db.commit()
 
@@ -246,11 +256,29 @@ async def get_hourly_stats(date_from: str, date_to: str) -> list:
         return [{"hour": h, "count": c} for h, c in sorted(hourly.items())]
 
 
-def _row_to_dict(row) -> dict:
+async def get_audio_debug(call_sid: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        cursor = await conn.execute(
+            "SELECT audio_debug FROM calls WHERE call_sid = ?", (call_sid,)
+        )
+        row = await cursor.fetchone()
+        if row and row["audio_debug"]:
+            try:
+                return json.loads(row["audio_debug"])
+            except (json.JSONDecodeError, TypeError):
+                return {}
+    return None
+
+
+def _row_to_dict(row, include_debug: bool = False) -> dict:
     d = dict(row)
     if "transcript" in d and isinstance(d["transcript"], str):
         try:
             d["transcript"] = json.loads(d["transcript"])
         except (json.JSONDecodeError, TypeError):
             d["transcript"] = []
+    # Strip audio_debug from normal responses (it can be large)
+    if not include_debug:
+        d.pop("audio_debug", None)
     return d
