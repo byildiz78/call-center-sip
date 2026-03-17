@@ -4,11 +4,26 @@ Collects lightweight audio statistics at each processing stage during a call.
 Stats are computed periodically (~1 second intervals) using numpy vectorized ops.
 """
 
+import json
 import time
 import logging
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """Handle numpy types for JSON serialization."""
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 
 def compute_audio_stats(pcm_bytes: bytes, sample_rate: int) -> dict:
@@ -38,7 +53,7 @@ def compute_audio_stats(pcm_bytes: bytes, sample_rate: int) -> dict:
         "zcr": round(float(zcr), 3),
         "samples": n,
         "duration_ms": round(n / sample_rate * 1000),
-        "silence": rms_db < -50.0,
+        "silence": bool(rms_db < -50.0),
     }
 
 

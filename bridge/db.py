@@ -83,7 +83,7 @@ async def end_call(
             WHERE call_sid = ?""",
             (now, duration, json.dumps(transcript, ensure_ascii=False),
              summary, recording_path, sentiment,
-             json.dumps(audio_debug or {}, ensure_ascii=False),
+             json.dumps(audio_debug or {}, ensure_ascii=False, default=str),
              call_sid),
         )
         await db.commit()
