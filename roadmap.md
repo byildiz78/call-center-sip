@@ -207,3 +207,6 @@ voiceagentopenai/
 - Setup message yapısı (model, voice, system instruction)
 - Audio forwarding mantığı (satır 88-100)
 - Response parsing (serverContent, modelTurn, parts) (satır 108-145)
+
+---
+> 🧭 Hıdır was here — 2026-03-18
